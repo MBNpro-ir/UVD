@@ -1807,28 +1807,52 @@ function Get-VideoInfoWithTimeout {
         $completed = Wait-Job -Job $job -Timeout $TimeoutSeconds
         
         if ($completed) {
-            $result = Receive-Job -Job $job
+            $rawResult = Receive-Job -Job $job
             
-            # Safety check: ensure result is a hashtable with expected properties
-            if ($result -is [hashtable]) {
-                # Log proxy usage info from job output
-                if ($result.Output) {
-                    $proxyInfo = $result.Output | Where-Object { $_ -like "PROXY_USED:*" -or $_ -eq "NO_PROXY_CONFIGURED" }
-                    if ($proxyInfo) {
-                        Write-ErrorLog "Video info job proxy status: $proxyInfo"
+            # Extract hashtable from job output (Receive-Job may return array of output items)
+            $result = $null
+            if ($rawResult -is [hashtable]) {
+                $result = $rawResult
+            } elseif ($rawResult -is [array]) {
+                # Find the hashtable in the array (it's the return value from the job)
+                foreach ($item in $rawResult) {
+                    if ($item -is [hashtable] -and $item.ContainsKey("Success")) {
+                        $result = $item
+                        break
                     }
-                    
-                    # Filter out our debug messages from the actual output
-                    $result.Output = $result.Output | Where-Object { $_ -notlike "PROXY_USED:*" -and $_ -ne "NO_PROXY_CONFIGURED" }
                 }
-            } else {
-                # Job returned unexpected output (e.g., error string instead of hashtable)
-                Write-ErrorLog "Video info job returned unexpected result type: $($result.GetType().Name)"
+                # If no hashtable found, the job failed to return proper result
+                if ($null -eq $result) {
+                    Write-ErrorLog "Video info job returned array but no hashtable found. Items: $($rawResult -join ', ')"
+                    $result = @{
+                        Success = $false
+                        Error = if ($rawResult -and $rawResult.Count -gt 0) { ($rawResult | Where-Object { $_ -is [string] -and $_ -notlike "PROXY_USED:*" -and $_ -ne "NO_PROXY_CONFIGURED" }) -join "`n" } else { "Job returned empty result" }
+                        ExitCode = -1
+                    }
+                }
+            } elseif ($null -ne $rawResult) {
+                # Job returned unexpected type
+                Write-ErrorLog "Video info job returned unexpected type: $($rawResult.GetType().Name)"
                 $result = @{
                     Success = $false
-                    Error = if ($result) { $result.ToString() } else { "Job returned null or invalid result" }
+                    Error = $rawResult.ToString()
                     ExitCode = -1
                 }
+            } else {
+                $result = @{
+                    Success = $false
+                    Error = "Job returned null"
+                    ExitCode = -1
+                }
+            }
+            
+            # Log and filter proxy debug messages from output
+            if ($result.ContainsKey("Output") -and $result.Output) {
+                $proxyInfo = $result.Output | Where-Object { $_ -like "PROXY_USED:*" -or $_ -eq "NO_PROXY_CONFIGURED" }
+                if ($proxyInfo) {
+                    Write-ErrorLog "Video info job proxy status: $proxyInfo"
+                }
+                $result.Output = $result.Output | Where-Object { $_ -notlike "PROXY_USED:*" -and $_ -ne "NO_PROXY_CONFIGURED" }
             }
             
             Remove-Job -Job $job
