@@ -1809,15 +1809,26 @@ function Get-VideoInfoWithTimeout {
         if ($completed) {
             $result = Receive-Job -Job $job
             
-            # Log proxy usage info from job output
-            $proxyInfo = $result.Output | Where-Object { $_ -like "PROXY_USED:*" -or $_ -eq "NO_PROXY_CONFIGURED" }
-            if ($proxyInfo) {
-                Write-ErrorLog "Video info job proxy status: $proxyInfo"
-            }
-            
-            # Filter out our debug messages from the actual output
-            if ($result.Output) {
-                $result.Output = $result.Output | Where-Object { $_ -notlike "PROXY_USED:*" -and $_ -ne "NO_PROXY_CONFIGURED" }
+            # Safety check: ensure result is a hashtable with expected properties
+            if ($result -is [hashtable]) {
+                # Log proxy usage info from job output
+                if ($result.Output) {
+                    $proxyInfo = $result.Output | Where-Object { $_ -like "PROXY_USED:*" -or $_ -eq "NO_PROXY_CONFIGURED" }
+                    if ($proxyInfo) {
+                        Write-ErrorLog "Video info job proxy status: $proxyInfo"
+                    }
+                    
+                    # Filter out our debug messages from the actual output
+                    $result.Output = $result.Output | Where-Object { $_ -notlike "PROXY_USED:*" -and $_ -ne "NO_PROXY_CONFIGURED" }
+                }
+            } else {
+                # Job returned unexpected output (e.g., error string instead of hashtable)
+                Write-ErrorLog "Video info job returned unexpected result type: $($result.GetType().Name)"
+                $result = @{
+                    Success = $false
+                    Error = if ($result) { $result.ToString() } else { "Job returned null or invalid result" }
+                    ExitCode = -1
+                }
             }
             
             Remove-Job -Job $job
@@ -3479,6 +3490,10 @@ do {
             
             # Attempt to get video info with timeout
             $result = Get-VideoInfoWithTimeout -Url $currentUrl -YtDlpPath $ytDlpPath -TimeoutSeconds $settings.general.request_timeout_seconds -UseCookies $useCookies -CookieFilePath $cookieFilePath
+            
+            if ($null -eq $result) {
+                $result = @{ Success = $false; Error = "No result returned from video info lookup"; ExitCode = -1 }
+            }
             
             if ($result.Success -and $result.ExitCode -eq 0) {
                 # Success - parse the JSON
