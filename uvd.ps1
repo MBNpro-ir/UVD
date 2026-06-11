@@ -2759,7 +2759,8 @@ function Show-DownloadProgress {
 function Invoke-YtDlpSimple {
     param (
         [string]$YtDlpPath,
-        [System.Collections.Generic.List[string]]$YtDlpArguments
+        [System.Collections.Generic.List[string]]$YtDlpArguments,
+        [int]$MaxRetries = 2
     )
 
     if ($null -eq $YtDlpArguments) {
@@ -2773,147 +2774,179 @@ function Invoke-YtDlpSimple {
         return @{ ExitCode = -1; Output = @(); Error = @("yt-dlp.exe not found at: $YtDlpPath") }
     }
 
-    $outputLines = [System.Collections.Generic.List[string]]::new()
-    $errorLines = [System.Collections.Generic.List[string]]::new()
+    $lastResult = $null
+    
+    for ($attempt = 0; $attempt -le $MaxRetries; $attempt++) {
+        if ($attempt -gt 0) {
+            $delay = $attempt * 5
+            Write-Host "`n  Retry attempt $attempt of $MaxRetries (waiting ${delay}s)..." -ForegroundColor Yellow
+            Write-ErrorLog "Download retry attempt $attempt of $MaxRetries after ${delay}s delay"
+            Start-Sleep -Seconds $delay
+        }
+        
+        $outputLines = [System.Collections.Generic.List[string]]::new()
+        $errorLines = [System.Collections.Generic.List[string]]::new()
 
-    try {
-        Write-Host "Initializing download..." -ForegroundColor Yellow
-        Write-ErrorLog "Executing command: $YtDlpPath $($YtDlpArguments -join ' ')"
-        Write-ErrorLog "Working Directory: $(Split-Path $YtDlpPath -Parent)"
-        Write-ErrorLog "File exists: $(Test-Path $YtDlpPath)"
-        
-        # Use the simplest method - direct execution with & operator
-        $currentLocation = Get-Location
-        Set-Location (Split-Path $YtDlpPath -Parent)
-        
         try {
-            # Variables for progress tracking
-            $currentFileName = ""
-            $lastProgress = -1
+            if ($attempt -eq 0) {
+                Write-Host "Initializing download..." -ForegroundColor Yellow
+            }
+            Write-ErrorLog "Executing command (attempt $($attempt+1)): $YtDlpPath $($YtDlpArguments -join ' ')"
+            Write-ErrorLog "Working Directory: $(Split-Path $YtDlpPath -Parent)"
             
-            # Execute yt-dlp directly and capture output line by line
-            & $YtDlpPath $YtDlpArguments 2>&1 | ForEach-Object {
-                $line = $_
+            # Use the simplest method - direct execution with & operator
+            $currentLocation = Get-Location
+            Set-Location (Split-Path $YtDlpPath -Parent)
+            
+            try {
+                # Variables for progress tracking
+                $currentFileName = ""
+                $lastProgress = -1
                 
-                if ($line -is [System.Management.Automation.ErrorRecord]) {
-                    $errorLines.Add($line.ToString())
-                    # Don't show error lines in real-time unless critical
-                    if ($line.ToString() -match "ERROR|CRITICAL") {
-                        Write-Host $line -ForegroundColor Red
-                    }
-                } else {
-                    $outputLines.Add($line.ToString())
+                # Execute yt-dlp directly and capture output line by line
+                & $YtDlpPath $YtDlpArguments 2>&1 | ForEach-Object {
+                    $line = $_
                     
-                    # Parse different types of output
-                    # Extract filename
-                    if ($line -match 'Destination:\s+(.+)') {
-                        $currentFileName = [System.IO.Path]::GetFileName($matches[1])
-                    }
-                    
-                    # Parse download progress
-                    $dlRegex = '\[download\]\s+(?<percent>[\d\.]+)%\s+of\s+(?:~\s*)?(?<size>[\d\.]+)(?<unit>\w+)(?:\s+at\s+(?<speed>[\d\.]+\w+/s))?(?:\s+ETA\s+(?<eta>[\d:]+))?'
-                    $dlMatch = [regex]::Match($line, $dlRegex)
-                    
-                    if ($dlMatch.Success) {
-                        $percent = [double]$dlMatch.Groups['percent'].Value
-                        $size = $dlMatch.Groups['size'].Value + $dlMatch.Groups['unit'].Value
-                        $speed = $dlMatch.Groups['speed'].Value
-                        $eta = $dlMatch.Groups['eta'].Value
+                    if ($line -is [System.Management.Automation.ErrorRecord]) {
+                        $errorLines.Add($line.ToString())
+                        # Don't show error lines in real-time unless critical
+                        if ($line.ToString() -match "ERROR|CRITICAL") {
+                            Write-Host $line -ForegroundColor Red
+                        }
+                    } else {
+                        $outputLines.Add($line.ToString())
                         
-                        # Only update if progress changed significantly
-                        if ([Math]::Abs($percent - $lastProgress) -ge 0.2 -or $percent -eq 100) {
-                            Show-CustomDownloadProgress -Activity "Downloading" `
-                                                      -Percentage $percent `
-                                                      -TotalSize $size `
-                                                      -Speed $speed `
-                                                      -ETA $eta `
+                        # Parse different types of output
+                        # Extract filename
+                        if ($line -match 'Destination:\s+(.+)') {
+                            $currentFileName = [System.IO.Path]::GetFileName($matches[1])
+                        }
+                        
+                        # Parse download progress
+                        $dlRegex = '\[download\]\s+(?<percent>[\d\.]+)%\s+of\s+(?:~\s*)?(?<size>[\d\.]+)(?<unit>\w+)(?:\s+at\s+(?<speed>[\d\.]+\w+/s))?(?:\s+ETA\s+(?<eta>[\d:]+))?'
+                        $dlMatch = [regex]::Match($line, $dlRegex)
+                        
+                        if ($dlMatch.Success) {
+                            $percent = [double]$dlMatch.Groups['percent'].Value
+                            $size = $dlMatch.Groups['size'].Value + $dlMatch.Groups['unit'].Value
+                            $speed = $dlMatch.Groups['speed'].Value
+                            $eta = $dlMatch.Groups['eta'].Value
+                            
+                            # Only update if progress changed significantly
+                            if ([Math]::Abs($percent - $lastProgress) -ge 0.2 -or $percent -eq 100) {
+                                Show-CustomDownloadProgress -Activity "Downloading" `
+                                                          -Percentage $percent `
+                                                          -TotalSize $size `
+                                                          -Speed $speed `
+                                                          -ETA $eta `
+                                                          -FileName $currentFileName `
+                                                          -Stage "download"
+                                $lastProgress = $percent
+                            }
+                        }
+                        # Parse merging
+                        elseif ($line -match '\[Merger\]') {
+                            Show-CustomDownloadProgress -Activity "Merging" `
+                                                      -Percentage 95 `
                                                       -FileName $currentFileName `
-                                                      -Stage "download"
-                            $lastProgress = $percent
+                                                      -Stage "merge"
+                        }
+                        # Parse audio extraction
+                        elseif ($line -match '\[ExtractAudio\]') {
+                            Show-CustomDownloadProgress -Activity "Extracting" `
+                                                      -Percentage 90 `
+                                                      -FileName $currentFileName `
+                                                      -Stage "process"
+                        }
+                        # Parse conversion
+                        elseif ($line -match '\[ffmpeg\]\s+Converting') {
+                            Show-CustomDownloadProgress -Activity "Converting" `
+                                                      -Percentage 92 `
+                                                      -FileName $currentFileName `
+                                                      -Stage "process"
+                        }
+                        # Parse subtitle embedding
+                        elseif ($line -match '\[EmbedSubtitle\]') {
+                            Show-CustomDownloadProgress -Activity "Processing" `
+                                                      -Percentage 98 `
+                                                      -FileName $currentFileName `
+                                                      -Stage "process"
+                        }
+                        # Parse post-processing
+                        elseif ($line -match '\[PostProcessor\]') {
+                            Show-CustomDownloadProgress -Activity "Finalizing" `
+                                                      -Percentage 99 `
+                                                      -FileName $currentFileName `
+                                                      -Stage "process"
+                        }
+                        # Show other important messages
+                        elseif ($line -match '\[(youtube|info|warning)\]' -or 
+                                $line -match 'Deleting original file' -or
+                                $line -match 'has already been downloaded') {
+                            # Don't show these lines to keep output clean
                         }
                     }
-                    # Parse merging
-                    elseif ($line -match '\[Merger\]') {
-                        Show-CustomDownloadProgress -Activity "Merging" `
-                                                  -Percentage 95 `
-                                                  -FileName $currentFileName `
-                                                  -Stage "merge"
+                }
+                
+                $exitCode = $LASTEXITCODE
+                
+                # Clear progress line and show completion
+                Write-Host "`r" + (" " * [Math]::Min($Host.UI.RawUI.WindowSize.Width, 120)) + "`r" -NoNewline
+                
+                if ($exitCode -eq 0) {
+                    Write-Host "✓ Download completed successfully!" -ForegroundColor Green
+                    return @{ 
+                        ExitCode = $exitCode
+                        Output = $outputLines.ToArray()
+                        Error = $errorLines.ToArray()
                     }
-                    # Parse audio extraction
-                    elseif ($line -match '\[ExtractAudio\]') {
-                        Show-CustomDownloadProgress -Activity "Extracting" `
-                                                  -Percentage 90 `
-                                                  -FileName $currentFileName `
-                                                  -Stage "process"
+                } else {
+                    $lastResult = @{ 
+                        ExitCode = $exitCode
+                        Output = $outputLines.ToArray()
+                        Error = $errorLines.ToArray()
                     }
-                    # Parse conversion
-                    elseif ($line -match '\[ffmpeg\]\s+Converting') {
-                        Show-CustomDownloadProgress -Activity "Converting" `
-                                                  -Percentage 92 `
-                                                  -FileName $currentFileName `
-                                                  -Stage "process"
-                    }
-                    # Parse subtitle embedding
-                    elseif ($line -match '\[EmbedSubtitle\]') {
-                        Show-CustomDownloadProgress -Activity "Processing" `
-                                                  -Percentage 98 `
-                                                  -FileName $currentFileName `
-                                                  -Stage "process"
-                    }
-                    # Parse post-processing
-                    elseif ($line -match '\[PostProcessor\]') {
-                        Show-CustomDownloadProgress -Activity "Finalizing" `
-                                                  -Percentage 99 `
-                                                  -FileName $currentFileName `
-                                                  -Stage "process"
-                    }
-                    # Show other important messages
-                    elseif ($line -match '\[(youtube|info|warning)\]' -or 
-                            $line -match 'Deleting original file' -or
-                            $line -match 'has already been downloaded') {
-                        # Don't show these lines to keep output clean
+                    Write-ErrorLog "Download attempt $($attempt+1) failed with exit code: $exitCode"
+                    # Check if error is retryable (bot detection, timeout, etc.)
+                    $errorOutput = ($errorLines -join "`n") + ($outputLines -join "`n")
+                    if ($errorOutput -match "Sign in to confirm|bot|403|429|timed out|timeout" -and $attempt -lt $MaxRetries) {
+                        Write-Host "  ⚠ Retryable error detected, will retry..." -ForegroundColor Yellow
+                        continue
+                    } else {
+                        Write-Host "✗ Download completed with errors (Exit code: $exitCode)" -ForegroundColor Yellow
+                        return $lastResult
                     }
                 }
             }
-            
-            $exitCode = $LASTEXITCODE
-            
-            # Clear progress line and show completion
-            Write-Host "`r" + (" " * [Math]::Min($Host.UI.RawUI.WindowSize.Width, 120)) + "`r" -NoNewline
-            
-            if ($exitCode -eq 0) {
-                Write-Host "✓ Download completed successfully!" -ForegroundColor Green
-            } else {
-                Write-Host "✗ Download completed with errors (Exit code: $exitCode)" -ForegroundColor Yellow
+            finally {
+                Set-Location $currentLocation
             }
+        }
+        catch {
+            $errorMessage = "Failed to start yt-dlp process: $($_.Exception.Message)"
+            Write-ErrorLog $errorMessage
+            $errorLines.Add($errorMessage)
+            
+            # Clear any progress line
+            Write-Host "`r" + (" " * [Math]::Min($Host.UI.RawUI.WindowSize.Width, 120)) + "`r" -NoNewline
+            Write-Host "✗ Download failed!" -ForegroundColor Red
             Write-Host ""
             
-            return @{ 
-                ExitCode = $exitCode
+            $lastResult = @{ 
+                ExitCode = -1
                 Output = $outputLines.ToArray()
                 Error = $errorLines.ToArray()
             }
-        }
-        finally {
-            Set-Location $currentLocation
-        }
-    }
-    catch {
-        $errorMessage = "Failed to start yt-dlp process: $($_.Exception.Message)"
-        Write-ErrorLog $errorMessage
-        $errorLines.Add($errorMessage)
-        
-        # Clear any progress line
-        Write-Host "`r" + (" " * [Math]::Min($Host.UI.RawUI.WindowSize.Width, 120)) + "`r" -NoNewline
-        Write-Host "✗ Download failed!" -ForegroundColor Red
-        Write-Host ""
-        
-        return @{ 
-            ExitCode = -1
-            Output = $outputLines.ToArray()
-            Error = $errorLines.ToArray()
+            if ($attempt -lt $MaxRetries) {
+                continue
+            }
+            return $lastResult
         }
     }
+    
+    # Return last result if all retries exhausted
+    if ($lastResult) { return $lastResult }
+    return @{ ExitCode = -1; Output = @(); Error = @("All retry attempts failed") }
 }
 
 function Invoke-YtDlpWithProgress {
@@ -3141,16 +3174,20 @@ function Show-VideoDetails {
         Write-Host ""
         Write-Host " 📝 Description:" -ForegroundColor Yellow
         Write-Host " ───────────────" -ForegroundColor Gray
-        $descriptionLines = $VideoInfo.description -split '\r?\n'
+        $descText = $VideoInfo.description
+        # Handle different description formats from various sites
+        $descriptionLines = $descText -split '\r?\n'
         $maxDescLines = $settings.advanced.max_description_lines
-        for ($i = 0; $i -lt [System.Math]::Min($descriptionLines.Count, $maxDescLines); $i++) {
-            if ($descriptionLines[$i].Trim().Length -gt 0) {
-                $line = $descriptionLines[$i]
+        $shownLines = 0
+        for ($i = 0; $i -lt $descriptionLines.Count -and $shownLines -lt $maxDescLines; $i++) {
+            $line = $descriptionLines[$i].Trim()
+            if ($line.Length -gt 0) {
                 if ($line.Length -gt 76) { $line = $line.Substring(0, 76) + "..." }
                 Write-Host "    $line" -ForegroundColor White
+                $shownLines++
             }
         }
-        if ($descriptionLines.Count -gt $maxDescLines) {
+        if ($descriptionLines.Count -gt $maxDescLines -or $descText.Length -gt ($maxDescLines * 80)) {
             Write-Host "    [...]" -ForegroundColor Gray
         }
     }
