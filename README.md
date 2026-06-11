@@ -27,8 +27,14 @@
 
 Open CMD or PowerShell and run:
 
+**CMD:**
 ```cmd
 curl -o uvd.bat https://github.com/MBNpro-ir/UVD/raw/main/uvd.bat && uvd.bat
+```
+
+**PowerShell:**
+```powershell
+curl -o uvd.bat https://github.com/MBNpro-ir/UVD/raw/main/uvd.bat; .\uvd.bat
 ```
 
 This will:
