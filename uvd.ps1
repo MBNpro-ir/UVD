@@ -527,6 +527,20 @@ function Create-SettingsFile {
     }
 }
 
+function Save-Settings {
+    param ([string]$Path = $settingsPath)
+    
+    try {
+        $settings | ConvertTo-Json -Depth 10 | Out-File -FilePath $Path -Encoding UTF8
+        Write-ErrorLog "Settings saved to: $Path"
+        return $true
+    } catch {
+        Write-Warning "Failed to save settings: $($_.Exception.Message)"
+        Write-ErrorLog "Failed to save settings: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 function Create-CookieFile {
     param ([string]$Path)
     
@@ -1745,9 +1759,9 @@ function Get-VideoInfoWithTimeout {
             $argumentList += "--proxy"
             $argumentList += $proxyUrl
             # Return proxy info for parent script logging
-            "PROXY_USED:$proxyUrl" | Out-Host
+            Write-Output "PROXY_USED:$proxyUrl"
         } else {
-            "NO_PROXY_CONFIGURED" | Out-Host
+            Write-Output "NO_PROXY_CONFIGURED"
         }
         
         if ($useCookies -and $cookieFilePath -and (Test-Path $cookieFilePath)) {
@@ -3311,7 +3325,7 @@ Write-Host "╔═════════════════════�
 Write-Host "║                                                                               ║" -ForegroundColor Cyan
 Write-Host "║                      Universal Video Downloader by MBNPRO                     ║" -ForegroundColor Yellow
 Write-Host "║                                                                               ║" -ForegroundColor Cyan
-Write-Host "║         Download from YouTube, TikTok, Instagram, Twitter, Facebook,         ║" -ForegroundColor White
+Write-Host "║         Download from YouTube, TikTok, Instagram, Twitter, Facebook,          ║" -ForegroundColor White
 Write-Host "║              Twitch, Vimeo, SoundCloud, Reddit & 1800+ sites                  ║" -ForegroundColor White
 Write-Host "║                                                                               ║" -ForegroundColor Cyan
 Write-Host "║                        Version 3.0 - Modern Edition                           ║" -ForegroundColor Gray
