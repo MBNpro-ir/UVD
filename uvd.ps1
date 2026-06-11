@@ -755,7 +755,7 @@ function Get-CookieFilePath {
     }
     
     if (-not (Test-Path $cookieFile)) {
-        $null = Create-CookieFile -Path $cookieFile
+        Write-ErrorLog "Cookie file not found at: $cookieFile (user must provide their own)"
     }
     
     if ([bool]$settings.cookies.use_cookies) {
@@ -3310,12 +3310,6 @@ function Show-QuickGuide {
     Write-Host "💡 Tip: Configure settings.json for proxy, cookies, and advanced options" -ForegroundColor White
     Write-Host "─────────────────────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
     Write-Host ""
-}
-
-# Create cookie file if it doesn't exist (before welcome banner)
-$cookieFilePath = Join-Path $scriptDir $settings.cookies.cookie_file_path
-if (-not (Test-Path $cookieFilePath)) {
-    $null = Create-CookieFile -Path $cookieFilePath
 }
 
 # Display welcome banner (only once at startup)
