@@ -1833,15 +1833,20 @@ function Get-VideoInfoWithTimeout {
                         break
                     }
                 }
-                $result = if ($hashtable) { $hashtable } else @{
-                    Success = $false
-                    Error = "Job returned array without valid result"
-                    ExitCode = -1
+                if ($hashtable) {
+                    $result = $hashtable
+                } else {
+                    $result = @{
+                        Success = $false
+                        Error = "Job returned array without valid result"
+                        ExitCode = -1
+                    }
                 }
             } elseif ($null -eq $result -or -not ($result -is [hashtable])) {
+                $msg = if ($result) { $result.ToString() } else { "Job returned null" }
                 $result = @{
                     Success = $false
-                    Error = if ($result) { $result.ToString() } else { "Job returned null" }
+                    Error = $msg
                     ExitCode = -1
                 }
             }
