@@ -28,12 +28,12 @@ CMD یا PowerShell را باز کنید و این دستور را اجرا کن
 
 **CMD:**
 ```cmd
-curl -o uvd.bat https://github.com/MBNpro-ir/UVD/raw/refs/heads/master/uvd.bat && uvd.bat
+curl -L -o uvd.bat https://github.com/MBNpro-ir/UVD/raw/refs/heads/master/uvd.bat && uvd.bat
 ```
 
 **PowerShell:**
 ```powershell
-curl.exe -o uvd.bat https://github.com/MBNpro-ir/UVD/raw/refs/heads/master/uvd.bat; cmd /c uvd.bat
+curl.exe -L -o uvd.bat https://github.com/MBNpro-ir/UVD/raw/refs/heads/master/uvd.bat; cmd /c uvd.bat
 ```
 
 این کار:
