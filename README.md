@@ -34,7 +34,7 @@ curl -o uvd.bat https://github.com/MBNpro-ir/UVD/raw/refs/heads/master/uvd.bat &
 
 **PowerShell:**
 ```powershell
-curl.exe -o uvd.bat https://github.com/MBNpro-ir/UVD/raw/refs/heads/master/uvd.bat; .\uvd.bat
+curl.exe -o uvd.bat https://github.com/MBNpro-ir/UVD/raw/refs/heads/master/uvd.bat; cmd /c uvd.bat
 ```
 
 This will:
