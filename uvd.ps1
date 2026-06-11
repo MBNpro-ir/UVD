@@ -1573,13 +1573,21 @@ function New-DownloadArguments {
         Write-ErrorLog "No proxy configured for download"
     }
     
-    # Add cookies if available
-    if ($UseCookies -and $CookieFilePath -and (Test-Path $CookieFilePath)) {
-        $argsList.Add("--cookies"); $argsList.Add($CookieFilePath)
-        Write-ErrorLog "Download cookies added: $CookieFilePath"
-    } elseif ($script:useBrowserCookies -and $script:browserCookieSource) {
+    # Add cookies if available - prefer browser cookies over file
+    if ($script:useBrowserCookies -and $script:browserCookieSource) {
         $argsList.Add("--cookies-from-browser"); $argsList.Add($script:browserCookieSource)
         Write-ErrorLog "Browser cookie source added: $($script:browserCookieSource)"
+    } elseif ($UseCookies -and $CookieFilePath -and (Test-Path $CookieFilePath)) {
+        # Copy cookies.txt to temp file so yt-dlp doesn't modify the original
+        $tempCookieFile = Join-Path ([System.IO.Path]::GetTempPath()) "uvd_dl_cookies_$([System.IO.Path]::GetRandomFileName()).txt"
+        try {
+            Copy-Item -Path $CookieFilePath -Destination $tempCookieFile -Force
+            $argsList.Add("--cookies"); $argsList.Add($tempCookieFile)
+            Write-ErrorLog "Download cookies added from temp copy: $tempCookieFile (original: $CookieFilePath)"
+        } catch {
+            $argsList.Add("--cookies"); $argsList.Add($CookieFilePath)
+            Write-ErrorLog "Download cookies added (original, copy failed): $CookieFilePath"
+        }
     } else {
         Write-ErrorLog "No cookies configured for download - UseCookies: $UseCookies, CookieFilePath: $CookieFilePath, FileExists: $(if ($CookieFilePath) { Test-Path $CookieFilePath } else { 'N/A' })"
     }
@@ -1758,18 +1766,24 @@ function Get-VideoInfoWithTimeout {
         if ($proxyUrl) {
             $argumentList += "--proxy"
             $argumentList += $proxyUrl
-            # Return proxy info for parent script logging
-            Write-Output "PROXY_USED:$proxyUrl"
-        } else {
-            Write-Output "NO_PROXY_CONFIGURED"
         }
         
-        if ($useCookies -and $cookieFilePath -and (Test-Path $cookieFilePath)) {
-            $argumentList += "--cookies"
-            $argumentList += $cookieFilePath
-        } elseif ($script:useBrowserCookies -and $script:browserCookieSource) {
+        # Add cookies - prefer browser cookies over file to prevent yt-dlp from modifying user's cookies.txt
+        if ($script:useBrowserCookies -and $script:browserCookieSource) {
             $argumentList += "--cookies-from-browser"
             $argumentList += $script:browserCookieSource
+        } elseif ($useCookies -and $cookieFilePath -and (Test-Path $cookieFilePath)) {
+            # Copy cookies.txt to temp file so yt-dlp doesn't modify the original
+            $tempCookieFile = Join-Path ([System.IO.Path]::GetTempPath()) "uvd_cookies_$([System.IO.Path]::GetRandomFileName()).txt"
+            try {
+                Copy-Item -Path $cookieFilePath -Destination $tempCookieFile -Force
+                $argumentList += "--cookies"
+                $argumentList += $tempCookieFile
+            } catch {
+                # If copy fails, use original as fallback
+                $argumentList += "--cookies"
+                $argumentList += $cookieFilePath
+            }
         }
         $argumentList += $url
         
@@ -1807,56 +1821,33 @@ function Get-VideoInfoWithTimeout {
         $completed = Wait-Job -Job $job -Timeout $TimeoutSeconds
         
         if ($completed) {
-            $rawResult = Receive-Job -Job $job
+            $result = Receive-Job -Job $job
             
-            # Extract hashtable from job output (Receive-Job may return array of output items)
-            $result = $null
-            if ($rawResult -is [hashtable]) {
-                $result = $rawResult
-            } elseif ($rawResult -is [array]) {
-                # Find the hashtable in the array (it's the return value from the job)
-                foreach ($item in $rawResult) {
+            # Handle case where result is not a proper hashtable
+            if ($result -is [array]) {
+                # Find the hashtable in the array
+                $hashtable = $null
+                foreach ($item in $result) {
                     if ($item -is [hashtable] -and $item.ContainsKey("Success")) {
-                        $result = $item
+                        $hashtable = $item
                         break
                     }
                 }
-                # If no hashtable found, the job failed to return proper result
-                if ($null -eq $result) {
-                    Write-ErrorLog "Video info job returned array but no hashtable found. Items: $($rawResult -join ', ')"
-                    $result = @{
-                        Success = $false
-                        Error = if ($rawResult -and $rawResult.Count -gt 0) { ($rawResult | Where-Object { $_ -is [string] -and $_ -notlike "PROXY_USED:*" -and $_ -ne "NO_PROXY_CONFIGURED" }) -join "`n" } else { "Job returned empty result" }
-                        ExitCode = -1
-                    }
-                }
-            } elseif ($null -ne $rawResult) {
-                # Job returned unexpected type
-                Write-ErrorLog "Video info job returned unexpected type: $($rawResult.GetType().Name)"
-                $result = @{
+                $result = if ($hashtable) { $hashtable } else @{
                     Success = $false
-                    Error = $rawResult.ToString()
+                    Error = "Job returned array without valid result"
                     ExitCode = -1
                 }
-            } else {
+            } elseif ($null -eq $result -or -not ($result -is [hashtable])) {
                 $result = @{
                     Success = $false
-                    Error = "Job returned null"
+                    Error = if ($result) { $result.ToString() } else { "Job returned null" }
                     ExitCode = -1
                 }
-            }
-            
-            # Log and filter proxy debug messages from output
-            if ($result.ContainsKey("Output") -and $result.Output) {
-                $proxyInfo = $result.Output | Where-Object { $_ -like "PROXY_USED:*" -or $_ -eq "NO_PROXY_CONFIGURED" }
-                if ($proxyInfo) {
-                    Write-ErrorLog "Video info job proxy status: $proxyInfo"
-                }
-                $result.Output = $result.Output | Where-Object { $_ -notlike "PROXY_USED:*" -and $_ -ne "NO_PROXY_CONFIGURED" }
             }
             
             Remove-Job -Job $job
-            Write-ErrorLog "Video info job completed within timeout. Success: $($result.Success), ExitCode: $($result.ExitCode)"
+            Write-ErrorLog "Video info job completed. Success: $($result.Success), ExitCode: $($result.ExitCode)"
             return $result
         } else {
             Write-ErrorLog "Video info retrieval timed out after $TimeoutSeconds seconds"
