@@ -16,9 +16,9 @@ REM Create UVD folder if it doesn't exist
 if not exist "UVD" mkdir "UVD"
 
 REM Set URLs and file paths
-set "SCRIPT_URL=https://github.com/MBNpro-ir/UVD/raw/main/uvd.ps1"
+set "SCRIPT_URL=https://github.com/MBNpro-ir/UVD/raw/refs/heads/master/uvd.ps1"
 set "LOCAL_SCRIPT_NAME=UVD\uvd_latest.ps1"
-set "LOGO_URL=https://github.com/MBNpro-ir/UVD/raw/main/logo.ico"
+set "LOGO_URL=https://github.com/MBNpro-ir/UVD/raw/refs/heads/master/logo.ico"
 set "LOCAL_LOGO_NAME=UVD\logo.ico"
 set "VERSION_FILE=UVD\version_cache.txt"
 
