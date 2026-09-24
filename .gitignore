@@ -1,0 +1,27 @@
+# Runtime directories created by the launcher and downloader
+/UVD/
+/Temp/
+/Downloaded/
+
+# Local preferences, authentication data, cache, and logs
+/settings.json
+/yt-dlp.conf
+/cookies.txt
+/browser_session_cookies.txt
+/browser_session_cookies.txt.new
+/video_cache.json
+/debug.txt
+
+# Downloaded tools and updater state
+/yt-dlp.exe
+/deno.exe
+/ffmpeg.exe
+/ffprobe.exe
+/ffmpeg.exe.release
+*.exe.failed.json
+*.exe.old
+*.exe.new.exe
+
+# Partial media downloads
+*.part
+*.ytdl

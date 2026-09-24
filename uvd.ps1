@@ -359,6 +359,12 @@ function Load-Settings {
                 download = if ($fileSettings.download) { $fileSettings.download } else { $defaultSettings.download }
                 optimization = if ($fileSettings.optimization) { $fileSettings.optimization } else { $defaultSettings.optimization }
                 advanced = if ($fileSettings.advanced) { $fileSettings.advanced } else { $defaultSettings.advanced }
+                yt_dlp = if ($fileSettings.yt_dlp) { $fileSettings.yt_dlp } else { $defaultSettings.yt_dlp }
+            }
+            if ($global:settings.optimization.extractor_args -eq 'youtube:player_client=web,android_vr,tv_downgraded') {
+                $global:settings.optimization.extractor_args = ''
+                Write-Host 'Removed obsolete YouTube client override from settings.' -ForegroundColor Yellow
+                Save-Settings | Out-Null
             }
             
             # Initialize debug logging after settings are loaded
@@ -438,7 +444,7 @@ function Get-DefaultSettings {
             sleep_requests = 1
             sleep_interval = 3
             max_sleep_interval = 7
-            extractor_args = "youtube:player_client=web,android_vr,tv_downgraded"
+            extractor_args = ""
             extractor_retries = 3
             use_aria2c_downloader = $false
             rate_limit = ""
@@ -449,6 +455,11 @@ function Get-DefaultSettings {
             log_file_path = "debug.txt"
             cleanup_temp_files = $true
             max_description_lines = 5
+        }
+        yt_dlp = @{
+            javascript_runtime = 'auto'
+            remote_components = 'ejs:github'
+            extra_arguments_json = '[]'
         }
 
     }
@@ -501,7 +512,7 @@ function Create-SettingsFile {
         "sleep_requests": 1,
         "sleep_interval": 3,
         "max_sleep_interval": 7,
-        "extractor_args": "youtube:player_client=web,android_vr,tv_downgraded",
+        "extractor_args": "",
         "extractor_retries": 3,
         "use_aria2c_downloader": false,
         "rate_limit": "",
@@ -512,6 +523,11 @@ function Create-SettingsFile {
         "log_file_path": "debug.txt",
         "cleanup_temp_files": true,
         "max_description_lines": 5
+    },
+    "yt_dlp": {
+        "javascript_runtime": "auto",
+        "remote_components": "ejs:github",
+        "extra_arguments_json": "[]"
     }
 }
 "@
@@ -539,6 +555,193 @@ function Save-Settings {
         Write-ErrorLog "Failed to save settings: $($_.Exception.Message)"
         return $false
     }
+}
+
+function Show-SettingsMenu {
+    $groupLabels = @{
+        general='General / performance'; download='Download folders'; optimization='Download speed and retries'
+        proxy='Network and proxy'; cookies='Browser and file cookies'; youtube_login='Browser login'; advanced='Logs and cleanup'
+        yt_dlp='yt-dlp and YouTube compatibility'
+    }
+    $settingLabels = @{
+        request_timeout_seconds='Network timeout (seconds)'; max_retries='Retry attempts'; show_processing_messages='Show progress messages'
+        use_database_cache='Use video info cache'; database_file='Cache filename'; temp_directory='Temporary folder'
+        output_directory='Downloads folder'; video_subdirectory='Video folder'; audio_subdirectory='Audio folder'; covers_subdirectory='Cover images folder'
+        enable_optimization='Enable download optimization'; concurrent_fragments='Parallel fragments'; fragment_retries='Fragment retry attempts'
+        retry_sleep='Seconds between retries'; socket_timeout='Connection timeout (seconds)'; sleep_requests='Pause between requests (seconds)'
+        sleep_interval='Minimum pause (seconds)'; max_sleep_interval='Maximum pause (seconds)'; extractor_args='Site extractor options'
+        extractor_retries='Extractor retry attempts'; use_aria2c_downloader='Use aria2c'; rate_limit='Download speed limit'
+        use_system_proxy='Use Windows proxy'; custom_proxy_enabled='Use custom proxy'; custom_proxy_host='Proxy address'
+        custom_proxy_port='Proxy port'; custom_proxy_username='Proxy username'; custom_proxy_password='Proxy password'
+        use_cookies='Use cookies'; cookie_source='Direct browser source (advanced)'; cookie_file_path='Cookie filename'; cookie_file_directory='Cookie folder'
+        enable_auto_login='Enable browser login'; chrome_profile_path='Chrome profile path'; login_timeout_seconds='Login timeout (seconds)'
+        enable_debug_logging='Save debug log'; log_file_path='Debug log filename'; cleanup_temp_files='Delete temporary files after download'
+        max_description_lines='Description lines shown'; javascript_runtime='JavaScript runtime'; remote_components='yt-dlp remote components'
+        extra_arguments_json='Advanced yt-dlp arguments (JSON array)'
+    }
+    while ($true) {
+        Clear-Host
+        Write-Host '╔════════════════════════════════════════════════════════════╗' -ForegroundColor Cyan
+        Write-Host '║                       UVD SETTINGS                         ║' -ForegroundColor Cyan
+        Write-Host '╚════════════════════════════════════════════════════════════╝' -ForegroundColor Cyan
+        Write-Host 'Choose a section. Selecting a switch changes and saves it immediately.' -ForegroundColor Gray
+        $groups = @('general','download','optimization','proxy','cookies','youtube_login','advanced','yt_dlp')
+        for ($i=0; $i -lt $groups.Count; $i++) { Write-Host "  [$($i+1)] $($groupLabels[$groups[$i]])" }
+        Write-Host '  [9] Sign in with browser' -ForegroundColor Yellow
+        Write-Host '  [10] Open settings.json in Notepad'
+        Write-Host '  [11] Edit any yt-dlp option in its native config file'
+        Write-Host '  [B] Back to main menu' -ForegroundColor Gray
+        $choice = (Read-Host 'Section').Trim()
+        if ($choice -in @('b','back','0','q','exit')) { return }
+        if ($choice -eq '10') { Open-SettingsFile; Load-Settings; Set-BrowserCookieState; continue }
+        if ($choice -eq '11') { Open-YtDlpConfig; continue }
+        if ($choice -eq '9') {
+            $testUrl = Read-Host 'Video URL (Enter uses a public YouTube sample; B cancels)'
+            if ($testUrl -in @('b','back','0')) { continue }
+            if (-not $testUrl) { $testUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }
+            if ($testUrl -match '^https?://') { Invoke-YouTubeLogin -Url $testUrl | Out-Null }
+            continue
+        }
+        $groupNumber = 0
+        if (-not [int]::TryParse($choice, [ref]$groupNumber) -or $groupNumber -lt 1 -or $groupNumber -gt $groups.Count) { continue }
+        $groupName = $groups[$groupNumber-1]
+        $group = $settings[$groupName]
+        $keys = if ($group -is [System.Collections.IDictionary]) { @($group.Keys | Sort-Object) } else { @($group.PSObject.Properties.Name | Sort-Object) }
+        while ($true) {
+            Clear-Host
+            Write-Host "SETTINGS > $($groupLabels[$groupName])" -ForegroundColor Cyan
+            Write-Host 'Select a setting to edit. B returns to sections.' -ForegroundColor Gray
+            Write-Host ''
+            for ($i=0; $i -lt $keys.Count; $i++) {
+                $rawValue = $group.($keys[$i])
+                $shownValue = if ($keys[$i] -match 'password') { '********' } elseif ($rawValue -is [bool]) { if ($rawValue) { 'On' } else { 'Off' } } else { $rawValue }
+                $label = if ($settingLabels.ContainsKey($keys[$i])) { $settingLabels[$keys[$i]] } else { $keys[$i] -replace '_', ' ' }
+                Write-Host "  [$($i+1)] $label" -NoNewline -ForegroundColor White
+                Write-Host "  $shownValue" -ForegroundColor Gray
+            }
+            Write-Host '  [B] Back' -ForegroundColor Gray
+            $field = (Read-Host 'Setting').Trim()
+            if ($field -in @('b','back','0','q')) { break }
+            $index = 0
+            if (-not [int]::TryParse($field, [ref]$index) -or $index -lt 1 -or $index -gt $keys.Count) { continue }
+            $key = $keys[$index-1]
+            $oldValue = $group.$key
+            try {
+                if ($oldValue -is [bool]) {
+                    $newValue = -not $oldValue
+                } elseif ($oldValue -is [int] -or $oldValue -is [long]) {
+                    $options = switch ($key) {
+                        'max_retries' { @(1,3,5,10) }
+                        'request_timeout_seconds' { @(10,20,30,60) }
+                        'concurrent_fragments' { @(1,4,8,16) }
+                        'fragment_retries' { @(3,10,20) }
+                        'max_description_lines' { @(0,3,5,10) }
+                        default { @(0,1,3,5,10,30,60) }
+                    }
+                    Write-Host "`n$key (current: $oldValue)" -ForegroundColor Yellow
+                    for ($j=0; $j -lt $options.Count; $j++) { Write-Host "  [$($j+1)] $($options[$j])" }
+                    Write-Host '  [C] Custom value   [B] Cancel' -ForegroundColor Gray
+                    $selection = (Read-Host 'Choose').Trim()
+                    if ($selection -in @('b','back','0','')) { continue }
+                    if ($selection -eq 'c') {
+                        $custom = Read-Host 'Number (B to cancel)'
+                        if ($custom -in @('b','back','')) { continue }
+                        $newValue = 0
+                        if (-not [int]::TryParse($custom, [ref]$newValue) -or $newValue -lt 0) { throw 'Enter a nonnegative integer.' }
+                    } else {
+                        $selectedNumber = 0
+                        if (-not [int]::TryParse($selection, [ref]$selectedNumber) -or $selectedNumber -lt 1 -or $selectedNumber -gt $options.Count) { continue }
+                        $newValue = $options[$selectedNumber-1]
+                    }
+                } else {
+                    $defaultValue = (Get-DefaultSettings)[$groupName][$key]
+                    Write-Host "`n$key (current: $oldValue)" -ForegroundColor Yellow
+                    if ($key -eq 'javascript_runtime') {
+                        Write-Host '  [1] Auto (Deno preferred)   [2] Deno   [3] Node   [4] Bun   [5] None'
+                        Write-Host '  [B] Cancel' -ForegroundColor Gray
+                        $selection = (Read-Host 'Choose').Trim()
+                        $newValue = switch ($selection) { '1' { 'auto' }; '2' { 'deno' }; '3' { 'node' }; '4' { 'bun' }; '5' { 'none' }; default { $null } }
+                        if ($null -eq $newValue) { continue }
+                    } elseif ($key -eq 'remote_components') {
+                        Write-Host '  [1] EJS from GitHub (recommended)   [2] Disabled'
+                        Write-Host '  [B] Cancel' -ForegroundColor Gray
+                        $selection = (Read-Host 'Choose').Trim()
+                        $newValue = switch ($selection) { '1' { 'ejs:github' }; '2' { '' }; default { $null } }
+                        if ($null -eq $newValue) { continue }
+                    } elseif ($key -eq 'cookie_source') {
+                        Write-Host '  [1] None (use cookie file)'
+                        Write-Host '  [2] Chrome   [3] Edge   [4] Firefox   [5] Brave'
+                        Write-Host '  [6] Custom browser profile   [B] Cancel' -ForegroundColor Gray
+                        $selection = (Read-Host 'Choose').Trim()
+                        $newValue = switch ($selection) {
+                            '1' { '' }; '2' { 'chrome' }; '3' { 'edge' }; '4' { 'firefox' }; '5' { 'brave' }
+                            '6' { Read-Host 'Browser:profile (B to cancel)' }
+                            default { $null }
+                        }
+                        if ($null -eq $newValue -or $newValue -in @('b','back')) { continue }
+                    } else {
+                        Write-Host "  [1] Use default: $defaultValue"
+                        Write-Host '  [2] Enter a custom value'
+                        Write-Host '  [3] Clear value'
+                        Write-Host '  [B] Cancel' -ForegroundColor Gray
+                        $selection = (Read-Host 'Choose').Trim()
+                        if ($selection -in @('b','back','0','')) { continue }
+                        if ($selection -eq '1') { $newValue = [string]$defaultValue }
+                        elseif ($selection -eq '3') { $newValue = '' }
+                        elseif ($selection -eq '2') {
+                            $newValue = Read-Host 'Value (B to cancel)'
+                            if ($newValue -in @('b','back','')) { continue }
+                        } else { continue }
+                    }
+                }
+                if ($key -eq 'extra_arguments_json') {
+                    if (-not $newValue.TrimStart().StartsWith('[')) { throw 'Enter a JSON array such as ["--no-playlist"].' }
+                    $parsedArguments = ConvertFrom-Json -InputObject $newValue -ErrorAction Stop
+                    foreach ($argument in $parsedArguments) {
+                        if ($argument -isnot [string]) { throw 'Every yt-dlp argument must be a string.' }
+                    }
+                }
+                $group.$key = $newValue
+                if (-not (Save-Settings)) { $group.$key = $oldValue; throw 'Could not save settings.' }
+                if ($groupName -eq 'cookies') { Set-BrowserCookieState }
+                if ($groupName -eq 'proxy') { Set-ProxyConfiguration }
+                $savedDisplay = if ($key -match 'password') { '********' } else { $newValue }
+                Write-Host "Saved: $key = $savedDisplay" -ForegroundColor Green
+            } catch { Write-Host $_.Exception.Message -ForegroundColor Yellow }
+        }
+    }
+}
+
+function Set-BrowserCookieState {
+    $source = [string]$settings.cookies.cookie_source
+    $script:useBrowserCookies = [bool]$settings.cookies.use_cookies -and $source -match '^(chrome|edge|firefox|brave)(:.+)?$'
+    $script:browserCookieSource = if ($script:useBrowserCookies) { $source } else { '' }
+}
+
+function Set-MainMenuWindowSize {
+    try {
+        if (-not ('UvdTerminalWindow' -as [type])) {
+            Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class UvdTerminalWindow {
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int command);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+}
+'@
+        }
+        $foreground = [UvdTerminalWindow]::GetForegroundWindow()
+        if ($foreground -eq [IntPtr]::Zero) { return }
+        [uint32]$ownerPid = 0
+        [void][UvdTerminalWindow]::GetWindowThreadProcessId($foreground, [ref]$ownerPid)
+        $ownerName = (Get-Process -Id $ownerPid -ErrorAction Stop).ProcessName
+        $isConsole = $foreground -eq [UvdTerminalWindow]::GetConsoleWindow()
+        if ($isConsole -or $ownerName -in @('WindowsTerminal','OpenConsole','conhost','cmd','powershell','pwsh')) {
+            [void][UvdTerminalWindow]::ShowWindow($foreground, 3) # SW_MAXIMIZE
+        }
+    } catch { Write-ErrorLog "Could not resize main menu: $($_.Exception.Message)" }
 }
 
 function Create-CookieFile {
@@ -653,6 +856,17 @@ function Clear-VideoCache {
     }
 }
 
+function Get-VideoCacheSignature {
+    $cookiePath = Get-CookieFilePath
+    $cookieState = if ($cookiePath -and (Test-Path -LiteralPath $cookiePath)) {
+        $file = Get-Item -LiteralPath $cookiePath
+        "$($file.Length):$($file.LastWriteTimeUtc.Ticks)"
+    } else { [string]$settings.cookies.cookie_source }
+    $configPath = Join-Path $scriptDir 'yt-dlp.conf'
+    $configState = if (Test-Path -LiteralPath $configPath) { (Get-Item -LiteralPath $configPath).LastWriteTimeUtc.Ticks } else { 0 }
+    return "$(Get-LocalVersion -ExecutablePath $ytDlpPath)|$($settings.optimization.extractor_args)|$($settings.yt_dlp.javascript_runtime)|$($settings.yt_dlp.remote_components)|$($settings.yt_dlp.extra_arguments_json)|$cookieState|$configState"
+}
+
 function Get-VideoFromCache {
     param ([string]$Url)
     
@@ -669,6 +883,11 @@ function Get-VideoFromCache {
         $db = Get-Content $dbPath -Raw | ConvertFrom-Json
         $cachedEntry = $db.videos | Where-Object { $_.url -eq $Url }
         if ($cachedEntry) {
+            $age = (Get-Date) - [datetime]$cachedEntry.cached_at
+            if ($cachedEntry.cache_key -ne (Get-VideoCacheSignature) -or $age.TotalMinutes -gt 30) {
+                Write-ErrorLog "Cached formats are stale for URL: $Url"
+                return $null
+            }
             # Validate cached entry has required fields
             if ($cachedEntry.info -and $cachedEntry.info.title -and $cachedEntry.info.formats) {
                 Write-Host "Video information found in cache" -ForegroundColor Green
@@ -734,6 +953,7 @@ function Save-VideoToCache {
             url = $Url
             info = $VideoInfo
             cached_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+            cache_key = Get-VideoCacheSignature
         }
         $db.videos += $newEntry
         
@@ -964,31 +1184,68 @@ function Get-LocalVersion {
     }
 }
 
-function Get-LatestYtDlpVersion {
+function Get-LatestReleaseAsset {
+    param([string]$Repository, [string]$AssetName)
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest" -TimeoutSec 20 -ErrorAction Stop
+    $asset = $release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
+    if (-not $asset) { throw "Asset $AssetName was not found in $Repository release $($release.tag_name)" }
+    return @{ Tag = [string]$release.tag_name; Url = [string]$asset.browser_download_url }
+}
+
+function Install-ReleaseExecutable {
+    param([string]$Target, [string]$Url, [string]$ZipMember = "", [string]$VersionArgument = '--version', [string]$ExpectedVersionPattern = '')
+    $staging = Join-Path ([IO.Path]::GetTempPath()) ("uvd_update_" + [guid]::NewGuid().ToString('N'))
+    $download = if ($ZipMember) { "$staging.zip" } else { "$staging.exe" }
+    $candidate = "$Target.new.exe"
+    $backup = "$Target.old"
     try {
-        $apiUrl = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
-        $response = Invoke-RestMethod -Uri $apiUrl -ErrorAction Stop
-        return $response.tag_name
-    } catch {
-        Write-ErrorLog "Failed to get latest yt-dlp version: $($_.Exception.Message)"
-        return $null
+        Invoke-WebRequest -Uri $Url -OutFile $download -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
+        if ($ZipMember) {
+            Expand-Archive -LiteralPath $download -DestinationPath $staging -ErrorAction Stop
+            $source = Get-ChildItem -LiteralPath $staging -Recurse -File -Filter $ZipMember | Select-Object -First 1
+            if (-not $source) { throw "$ZipMember missing from archive" }
+            Copy-Item -LiteralPath $source.FullName -Destination $candidate -Force -ErrorAction Stop
+        } else {
+            Copy-Item -LiteralPath $download -Destination $candidate -Force -ErrorAction Stop
+        }
+        if ((Get-Item -LiteralPath $candidate).Length -lt 100000) { throw 'Downloaded executable is unexpectedly small' }
+        $versionLine = & $candidate $VersionArgument 2>&1 | Select-Object -First 1
+        if ($LASTEXITCODE -ne 0 -or ($ExpectedVersionPattern -and $versionLine -notmatch $ExpectedVersionPattern)) {
+            throw "Downloaded executable failed version check: $versionLine"
+        }
+        if (Test-Path -LiteralPath $Target) { Move-Item -LiteralPath $Target -Destination $backup -Force -ErrorAction Stop }
+        try { Move-Item -LiteralPath $candidate -Destination $Target -Force -ErrorAction Stop }
+        catch {
+            if (Test-Path -LiteralPath $backup) { Move-Item -LiteralPath $backup -Destination $Target -Force }
+            throw
+        }
+        if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force }
+    } finally {
+        if (Test-Path -LiteralPath $candidate) { Remove-Item -LiteralPath $candidate -Force }
+        if (Test-Path -LiteralPath $download) { Remove-Item -LiteralPath $download -Force }
+        if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     }
 }
 
-function Get-LatestFfmpegVersion {
+function Test-RecentFailedUpdate {
+    param([string]$Target, [string]$ReleaseId)
+    $marker = "$Target.failed.json"
+    if (-not (Test-Path -LiteralPath $marker)) { return $false }
     try {
-        $apiUrl = "https://api.github.com/repos/GyanD/codexffmpeg/releases/latest"
-        $response = Invoke-RestMethod -Uri $apiUrl -ErrorAction Stop
-        foreach ($asset in $response.assets) {
-            if ($asset.name -match 'ffmpeg-(.+?)-essentials_build\.zip') {
-                return $matches[1]
-            }
-        }
-        return $response.tag_name
-    } catch {
-        Write-ErrorLog "Failed to get latest ffmpeg version: $($_.Exception.Message)"
-        return $null
-    }
+        $failure = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+        return $failure.release -eq $ReleaseId -and ([datetime]$failure.time -gt (Get-Date).AddHours(-24))
+    } catch { return $false }
+}
+
+function Save-FailedUpdate {
+    param([string]$Target, [string]$ReleaseId)
+    @{ release=$ReleaseId; time=(Get-Date).ToString('o') } | ConvertTo-Json | Set-Content -LiteralPath "$Target.failed.json" -Encoding UTF8
+}
+
+function Clear-FailedUpdate {
+    param([string]$Target)
+    $marker = "$Target.failed.json"
+    if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force }
 }
 
 function Invoke-StartupTask {
@@ -1071,326 +1328,267 @@ function Resolve-ToolPath {
         [string]$LocalPath
     )
     
+    if (Test-Path $LocalPath) {
+        return $LocalPath
+    }
     $systemPath = Find-ToolInPath -ToolName $ToolName
     if ($systemPath -and (Test-Path $systemPath)) {
         return $systemPath
-    }
-    
-    if (Test-Path $LocalPath) {
-        return $LocalPath
     }
     
     return $LocalPath
 }
 
 function Update-YtDlp {
-    param ([string]$YtDlpPath, [switch]$Quiet)
-    
-    if (-not $Quiet) { Write-Host "Checking yt-dlp version..." -ForegroundColor Yellow }
-    
-    $wingetAvailable = Test-WingetAvailable
-    $localVersion = Get-LocalVersion -ExecutablePath $YtDlpPath
-    
-    if ($null -eq $localVersion -and $wingetAvailable) {
-        $systemYtDlp = Find-ToolInPath -ToolName "yt-dlp"
-        if ($systemYtDlp) {
-            $localVersion = Get-LocalVersion -ExecutablePath $systemYtDlp
-            if ($localVersion -and $localVersion -ne "unknown") {
-                $YtDlpPath = $systemYtDlp
-                if (-not $Quiet) { Write-Host "Found system yt-dlp: $systemYtDlp" -ForegroundColor Cyan }
+    param([string]$YtDlpPath, [switch]$Quiet)
+    try {
+        $release = Get-LatestReleaseAsset -Repository 'yt-dlp/yt-dlp-nightly-builds' -AssetName 'yt-dlp.exe'
+        $currentPath = if (Test-Path -LiteralPath $YtDlpPath) { $YtDlpPath } else { Find-ToolInPath -ToolName 'yt-dlp' }
+        $current = if ($currentPath) { Get-LocalVersion -ExecutablePath $currentPath } else { $null }
+        if ($current -ne $release.Tag) {
+            if (Test-RecentFailedUpdate -Target $YtDlpPath -ReleaseId $release.Tag) {
+                Write-Warning 'yt-dlp update failed recently; using installed version and retrying tomorrow.'
+                return @{ Success = [bool]$currentPath; NeedsRestart = $false }
             }
-        }
-    }
-    
-    $latestVersion = Get-LatestYtDlpVersion
-    
-    $needsUpdate = $false
-    if ($null -eq $localVersion) {
-        if (-not $Quiet) { Write-Host "yt-dlp not found. Installing via winget..." -ForegroundColor Yellow }
-        $needsUpdate = $true
-    } elseif ($null -eq $latestVersion) {
-        if (-not $Quiet) { Write-Host "Could not check latest yt-dlp version. Using existing version." -ForegroundColor Yellow }
+            try { Install-ReleaseExecutable -Target $YtDlpPath -Url $release.Url -ExpectedVersionPattern ([regex]::Escape($release.Tag)) }
+            catch { Save-FailedUpdate -Target $YtDlpPath -ReleaseId $release.Tag; throw }
+            Clear-FailedUpdate -Target $YtDlpPath
+            $current = Get-LocalVersion -ExecutablePath $YtDlpPath
+            if ($current -ne $release.Tag) { throw "yt-dlp version mismatch: expected $($release.Tag), got $current" }
+            Write-Host "yt-dlp updated to nightly $current" -ForegroundColor Green
+        } elseif (-not $Quiet) { Write-Host "yt-dlp nightly $current is current" -ForegroundColor Green }
         return @{ Success = $true; NeedsRestart = $false }
-    } elseif ($localVersion -eq "unknown") {
-        if (-not $Quiet) { Write-Host "Could not determine local yt-dlp version. Re-installing..." -ForegroundColor Yellow }
-        $needsUpdate = $true
-    } else {
-        if (-not $Quiet) {
-            Write-Host "Local yt-dlp version: $localVersion" -ForegroundColor Cyan
-            Write-Host "Latest yt-dlp version: $latestVersion" -ForegroundColor Cyan
-        }
-        
-        if ($localVersion -ne $latestVersion) {
-            if (-not $Quiet) { Write-Host "New version available! Updating..." -ForegroundColor Green }
-            $needsUpdate = $true
-        } else {
-            if (-not $Quiet) { Write-Host "yt-dlp is up to date." -ForegroundColor Green }
-            return @{ Success = $true; NeedsRestart = $false }
-        }
+    } catch {
+        Write-Warning "yt-dlp update check failed: $($_.Exception.Message)"
+        Write-ErrorLog "yt-dlp update failed: $($_.Exception.Message)"
+        return @{ Success = [bool](Resolve-ToolPath -ToolName 'yt-dlp' -LocalPath $YtDlpPath | Where-Object { Test-Path -LiteralPath $_ }); NeedsRestart = $false }
     }
-    
-    if ($needsUpdate) {
-        $needsRestart = $false
-        
-        if ($wingetAvailable) {
-            if (-not $Quiet) { Write-Host "Installing yt-dlp via winget (official)..." -ForegroundColor Cyan }
-            
-            $installResult = $null
-            try {
-                if ($localVersion) {
-                    $installResult = & winget upgrade --id yt-dlp.yt-dlp --accept-package-agreements --accept-source-agreements 2>&1
-                } else {
-                    $installResult = & winget install --id yt-dlp.yt-dlp --accept-package-agreements --accept-source-agreements 2>&1
-                }
-                
-                $installOutput = $installResult | Out-String
-                
-                if ($installOutput -match "Successfully installed" -or $installOutput -match "Successfully upgraded" -or $installOutput -match "No applicable update") {
-                    if (-not $Quiet) { Write-Host "yt-dlp installed/updated via winget successfully!" -ForegroundColor Green }
-                    Write-ErrorLog "yt-dlp installed/updated via winget"
-                    $needsRestart = $true
-                    
-                    $newSystemPath = Find-ToolInPath -ToolName "yt-dlp"
-                    if ($newSystemPath) {
-                        $YtDlpPath = $newSystemPath
-                        if (-not $Quiet) { Write-Host "yt-dlp found at: $newSystemPath" -ForegroundColor Cyan }
-                    }
-                    
-                    return @{ Success = $true; NeedsRestart = $needsRestart }
-                }
-            } catch {
-                if (-not $Quiet) { Write-Host "Winget installation failed, falling back to manual download..." -ForegroundColor Yellow }
-                Write-ErrorLog "Winget install failed for yt-dlp: $($_.Exception.Message)"
-            }
-        }
-        
-        if (Test-Path $YtDlpPath) {
-            $backupPath = "$YtDlpPath.old"
-            try {
-                Move-Item -Path $YtDlpPath -Destination $backupPath -Force -ErrorAction Stop
-                if (-not $Quiet) { Write-Host "Backed up old version to $backupPath" -ForegroundColor Gray }
-            } catch {
-                if (-not $Quiet) { Write-Warning "Failed to backup old yt-dlp: $($_.Exception.Message)" }
-            }
-        }
-        
-        $ytDlpUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-        try {
-            if (-not $Quiet) { Write-Host "Downloading yt-dlp manually from GitHub..." -ForegroundColor Yellow }
-            Invoke-WebRequest -Uri $ytDlpUrl -OutFile $YtDlpPath -ErrorAction Stop
-            if (-not $Quiet) { Write-Host "yt-dlp updated successfully to version $latestVersion" -ForegroundColor Green }
-            Write-ErrorLog "yt-dlp updated manually to version $latestVersion"
-            
-            if (Test-Path "$YtDlpPath.old") {
-                Remove-Item -Path "$YtDlpPath.old" -Force -ErrorAction SilentlyContinue
-            }
-            return @{ Success = $true; NeedsRestart = $false }
-        } catch {
-            if (Test-Path "$YtDlpPath.old") {
-                Move-Item -Path "$YtDlpPath.old" -Destination $YtDlpPath -Force -ErrorAction SilentlyContinue
-            }
-            Resolve-ScriptError -UserMessage "Failed to download yt-dlp. Check your internet connection." `
-                               -InternalLogMessage "Invoke-WebRequest failed for yt-dlp. URL: $ytDlpUrl. Exception: $($_.Exception.Message)" `
-                               -IsCritical $true
-            return @{ Success = $false; NeedsRestart = $false }
-        }
-    }
-    return @{ Success = $true; NeedsRestart = $false }
 }
 
 function Update-Ffmpeg {
-    param ([string]$FfmpegPath, [switch]$Quiet)
-    
-    if (-not $Quiet) { Write-Host "Checking ffmpeg version..." -ForegroundColor Yellow }
-    
-    $wingetAvailable = Test-WingetAvailable
-    $localVersion = Get-LocalVersion -ExecutablePath $FfmpegPath -VersionArg "-version"
-    
-    if ($null -eq $localVersion -and $wingetAvailable) {
-        $systemFfmpeg = Find-ToolInPath -ToolName "ffmpeg"
-        if ($systemFfmpeg) {
-            $localVersion = Get-LocalVersion -ExecutablePath $systemFfmpeg -VersionArg "-version"
-            if ($localVersion -and $localVersion -ne "unknown") {
-                $FfmpegPath = $systemFfmpeg
-                if (-not $Quiet) { Write-Host "Found system ffmpeg: $systemFfmpeg" -ForegroundColor Cyan }
+    param([string]$FfmpegPath, [switch]$Quiet)
+    try {
+        $api = Invoke-RestMethod -Uri 'https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest' -TimeoutSec 20 -ErrorAction Stop
+        $assetName = 'ffmpeg-master-latest-win64-gpl.zip'
+        $asset = $api.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+        if (-not $asset) { throw "FFmpeg asset $assetName is unavailable" }
+        $tag = [string]$asset.id
+        $versionPath = "$FfmpegPath.release"
+        $installedTag = if (Test-Path -LiteralPath $versionPath) { (Get-Content -LiteralPath $versionPath -Raw).Trim() } else { '' }
+        $localVersion = ''
+        if (Test-Path -LiteralPath $FfmpegPath) {
+            try { $localVersion = & $FfmpegPath -version 2>&1 | Select-Object -First 1 } catch { $localVersion = '' }
+        }
+        if ($installedTag -ne $tag -or $localVersion -notmatch '^ffmpeg version') {
+            if (Test-RecentFailedUpdate -Target $FfmpegPath -ReleaseId $tag) {
+                Write-Warning 'ffmpeg update failed recently; using installed version and retrying tomorrow.'
+                return @{ Success = [bool](Find-ToolInPath -ToolName 'ffmpeg'); NeedsRestart = $false }
             }
+            try { Install-ReleaseExecutable -Target $FfmpegPath -Url $asset.browser_download_url -ZipMember 'ffmpeg.exe' -VersionArgument '-version' -ExpectedVersionPattern '^ffmpeg version' }
+            catch { Save-FailedUpdate -Target $FfmpegPath -ReleaseId $tag; throw }
+            $localVersion = & $FfmpegPath -version 2>&1 | Select-Object -First 1
+            if ($localVersion -notmatch '^ffmpeg version') { throw 'Downloaded FFmpeg failed version check' }
+            [IO.File]::WriteAllText($versionPath, $tag)
+            Clear-FailedUpdate -Target $FfmpegPath
+            Write-Host "ffmpeg updated to master build $tag" -ForegroundColor Green
+        } elseif (-not $Quiet) { Write-Host "ffmpeg master build $tag is current" -ForegroundColor Green }
+        return @{ Success = $true; NeedsRestart = $false }
+    } catch {
+        Write-Warning "ffmpeg update check failed: $($_.Exception.Message)"
+        Write-ErrorLog "ffmpeg update failed: $($_.Exception.Message)"
+        return @{ Success = [bool](Resolve-ToolPath -ToolName 'ffmpeg' -LocalPath $FfmpegPath | Where-Object { Test-Path -LiteralPath $_ }); NeedsRestart = $false }
+    }
+}
+
+function Get-InstalledBrowsers {
+    $candidates = @(
+        @{ Name='chrome'; Label='Google Chrome'; Paths=@("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe") },
+        @{ Name='edge'; Label='Microsoft Edge'; Paths=@("$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe") },
+        @{ Name='firefox'; Label='Mozilla Firefox'; Paths=@("$env:ProgramFiles\Mozilla Firefox\firefox.exe", "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe") },
+        @{ Name='brave'; Label='Brave'; Paths=@("$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe", "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\Application\brave.exe") }
+    )
+    foreach ($browser in $candidates) {
+        if (@($browser.Paths | Where-Object { $_ -and (Test-Path -LiteralPath $_) }).Count -gt 0) { $browser }
+    }
+}
+
+function Test-BrowserCookies {
+    param([string]$Browser, [string]$Url)
+    $result = & $ytDlpPath --cookies-from-browser $Browser --simulate --skip-download --no-playlist --print id $Url 2>&1 | ForEach-Object { $_.ToString() }
+    if ($LASTEXITCODE -eq 0) { return @{ Success=$true; Error='' } }
+    return @{ Success=$false; Error=(($result | Select-Object -Last 2) -join ' ').Trim() }
+}
+
+function Get-YtDlpRuntimeArguments {
+    $arguments = New-Object 'System.Collections.Generic.List[string]'
+    $runtimePreference = [string]$settings.yt_dlp.javascript_runtime
+    if (-not $runtimePreference) { $runtimePreference = 'auto' }
+    $runtimeNames = if ($runtimePreference -eq 'auto') { @('deno','node','bun') } elseif ($runtimePreference -eq 'none') { @() } else { @($runtimePreference) }
+    $runtime = $null
+    foreach ($name in $runtimeNames) {
+        $localPath = Join-Path $scriptDir "$name.exe"
+        if (Test-Path -LiteralPath $localPath) { $runtime = "${name}:$localPath"; break }
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($command) { $runtime = $name; break }
+    }
+    if ($runtime) {
+        if ($runtimePreference -notin @('auto','deno')) { $arguments.Add('--no-js-runtimes') }
+        $arguments.Add('--js-runtimes'); $arguments.Add($runtime)
+        if ($settings.yt_dlp.remote_components) {
+            $arguments.Add('--remote-components'); $arguments.Add([string]$settings.yt_dlp.remote_components)
         }
     }
-    
-    $needsUpdate = $false
-    if ($null -eq $localVersion) {
-        if (-not $Quiet) { Write-Host "ffmpeg not found. Installing via winget..." -ForegroundColor Yellow }
-        $needsUpdate = $true
-    } else {
-        if (Test-Path $FfmpegPath) {
-            $fileAge = (Get-Date) - (Get-Item $FfmpegPath).LastWriteTime
-            if ($fileAge.Days -gt 30) {
-                if (-not $Quiet) { Write-Host "ffmpeg is more than 30 days old. Updating..." -ForegroundColor Yellow }
-                $needsUpdate = $true
-            } else {
-                if (-not $Quiet) { Write-Host "ffmpeg is relatively recent (less than 30 days old)." -ForegroundColor Green }
-                return @{ Success = $true; NeedsRestart = $false }
-            }
-        }
-    }
-    
-    if ($needsUpdate) {
-        $needsRestart = $false
-        
-        if ($wingetAvailable) {
-            if (-not $Quiet) { Write-Host "Installing ffmpeg via winget (official Gyan.FFmpeg)..." -ForegroundColor Cyan }
-            
-            try {
-                $installResult = & winget install --id Gyan.FFmpeg --accept-package-agreements --accept-source-agreements 2>&1
-                $installOutput = $installResult | Out-String
-                
-                if ($installOutput -match "Successfully installed" -or $installOutput -match "No applicable update") {
-                    if (-not $Quiet) { Write-Host "ffmpeg installed via winget successfully!" -ForegroundColor Green }
-                    Write-ErrorLog "ffmpeg installed/updated via winget (Gyan.FFmpeg)"
-                    $needsRestart = $true
-                    
-                    $newSystemPath = Find-ToolInPath -ToolName "ffmpeg"
-                    if ($newSystemPath) {
-                        $FfmpegPath = $newSystemPath
-                        if (-not $Quiet) { Write-Host "ffmpeg found at: $newSystemPath" -ForegroundColor Cyan }
-                    }
-                    
-                    return @{ Success = $true; NeedsRestart = $needsRestart }
-                }
-            } catch {
-                if (-not $Quiet) { Write-Host "Winget installation failed, falling back to manual download..." -ForegroundColor Yellow }
-                Write-ErrorLog "Winget install failed for ffmpeg: $($_.Exception.Message)"
-            }
-        }
-        
-        if (Test-Path $FfmpegPath) {
-            $backupPath = "$FfmpegPath.old"
-            try {
-                Move-Item -Path $FfmpegPath -Destination $backupPath -Force -ErrorAction Stop
-                if (-not $Quiet) { Write-Host "Backed up old version to $backupPath" -ForegroundColor Gray }
-            } catch {
-                if (-not $Quiet) { Write-Warning "Failed to backup old ffmpeg: $($_.Exception.Message)" }
-            }
-        }
-        
-        $ffmpegZipUrl = "https://github.com/GyanD/codexffmpeg/releases/download/$latestVersion/ffmpeg-$latestVersion-essentials_build.zip"
-        $tempZipPath = Join-Path $env:TEMP "ffmpeg_uvd_temp.zip"
-        $tempExtractPath = Join-Path $env:TEMP "ffmpeg_uvd_extract"
-        
-        if (Test-Path $tempExtractPath) { Remove-Item -Path $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue }
-        
+    if ($runtimePreference -eq 'none') { $arguments.Add('--no-js-runtimes') }
+    $configPath = Join-Path $scriptDir 'yt-dlp.conf'
+    if (Test-Path -LiteralPath $configPath) { $arguments.Add('--config-locations'); $arguments.Add($configPath) }
+    return $arguments.ToArray()
+}
+
+function Get-YtDlpExtraArguments {
+    $arguments = New-Object 'System.Collections.Generic.List[string]'
+    if ($settings.yt_dlp.extra_arguments_json) {
         try {
-            if (-not $Quiet) {
-                Write-Host "Downloading ffmpeg essentials build manually..." -ForegroundColor Yellow
-                Write-Host "This is a smaller package (~50MB) with essential codecs only." -ForegroundColor Yellow
+            $additional = ConvertFrom-Json -InputObject ([string]$settings.yt_dlp.extra_arguments_json) -ErrorAction Stop
+            foreach ($item in $additional) {
+                if ($item -isnot [string]) { throw 'Each extra yt-dlp argument must be a string.' }
+                $arguments.Add($item)
             }
-            Invoke-WebRequest -Uri $ffmpegZipUrl -OutFile $tempZipPath -ErrorAction Stop
-            if (-not $Quiet) { Write-Host "ffmpeg downloaded. Extracting..." -ForegroundColor Yellow }
-            Expand-Archive -Path $tempZipPath -DestinationPath $tempExtractPath -Force -ErrorAction Stop
-            
-            $ffmpegExeFile = Get-ChildItem -Path $tempExtractPath -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
-            if ($ffmpegExeFile) {
-                Copy-Item -Path $ffmpegExeFile.FullName -Destination $FfmpegPath -Force -ErrorAction Stop
-                if (-not $Quiet) { Write-Host "ffmpeg essentials build installed successfully!" -ForegroundColor Green }
-                Write-ErrorLog "ffmpeg essentials build updated manually to version $latestVersion"
-                
-                if (Test-Path "$FfmpegPath.old") {
-                    Remove-Item -Path "$FfmpegPath.old" -Force -ErrorAction SilentlyContinue
-                }
-            } else {
-                throw "ffmpeg.exe not found within the downloaded files."
-            }
-            return @{ Success = $true; NeedsRestart = $false }
-        } catch {
-            if (Test-Path "$FfmpegPath.old") {
-                Move-Item -Path "$FfmpegPath.old" -Destination $FfmpegPath -Force -ErrorAction SilentlyContinue
-            }
-            Resolve-ScriptError -UserMessage "Failed during ffmpeg download or setup." `
-                               -InternalLogMessage "Error during ffmpeg setup. URL: $ffmpegZipUrl. Exception: $($_.Exception.Message)" `
-                               -IsCritical $true
-            return @{ Success = $false; NeedsRestart = $false }
-        } finally {
-            if (Test-Path $tempZipPath) { Remove-Item -Path $tempZipPath -Force -ErrorAction SilentlyContinue }
-            if (Test-Path $tempExtractPath) { Remove-Item -Path $tempExtractPath -Recurse -Force -ErrorAction SilentlyContinue }
-        }
+        } catch { Write-Warning "Invalid yt-dlp extra_arguments_json: $($_.Exception.Message)" }
     }
-    return @{ Success = $true; NeedsRestart = $false }
+    return $arguments.ToArray()
+}
+
+function Ensure-JavaScriptRuntime {
+    if ($settings.yt_dlp.javascript_runtime -eq 'none') { return }
+    if ($settings.yt_dlp.javascript_runtime -in @('node','bun') -and (Get-Command $settings.yt_dlp.javascript_runtime -ErrorAction SilentlyContinue)) { return }
+    if (Get-Command deno -ErrorAction SilentlyContinue) { return }
+    $denoPath = Join-Path $scriptDir 'deno.exe'
+    if (Test-Path -LiteralPath $denoPath) { return }
+    try {
+        $release = Get-LatestReleaseAsset -Repository 'denoland/deno' -AssetName 'deno-x86_64-pc-windows-msvc.zip'
+        if (Test-RecentFailedUpdate -Target $denoPath -ReleaseId $release.Tag) { return }
+        Install-ReleaseExecutable -Target $denoPath -Url $release.Url -ZipMember 'deno.exe' -ExpectedVersionPattern '^deno '
+        Clear-FailedUpdate -Target $denoPath
+        Write-Host 'Installed Deno JavaScript runtime for full YouTube format support.' -ForegroundColor Green
+    } catch {
+        Save-FailedUpdate -Target $denoPath -ReleaseId $(if ($release) { $release.Tag } else { 'unknown' })
+        Write-Warning "Could not install Deno: $($_.Exception.Message)"
+    }
+}
+
+function Invoke-CdpCommand {
+    param([string]$WebSocketUrl, [string]$Method)
+    $socket = New-Object System.Net.WebSockets.ClientWebSocket
+    $timeout = New-Object System.Threading.CancellationTokenSource(15000)
+    try {
+        $socket.ConnectAsync([Uri]$WebSocketUrl, $timeout.Token).GetAwaiter().GetResult()
+        $request = @{ id=1; method=$Method } | ConvertTo-Json -Compress
+        $bytes = [Text.Encoding]::UTF8.GetBytes($request)
+        $segment = New-Object 'System.ArraySegment[byte]' -ArgumentList (, $bytes)
+        $socket.SendAsync($segment, [Net.WebSockets.WebSocketMessageType]::Text, $true, $timeout.Token).GetAwaiter().GetResult()
+        while ($true) {
+            $stream = New-Object IO.MemoryStream
+            do {
+                $buffer = New-Object byte[] 65536
+                $received = $socket.ReceiveAsync((New-Object 'System.ArraySegment[byte]' -ArgumentList (, $buffer)), $timeout.Token).GetAwaiter().GetResult()
+                $stream.Write($buffer, 0, $received.Count)
+            } until ($received.EndOfMessage)
+            $message = [Text.Encoding]::UTF8.GetString($stream.ToArray()) | ConvertFrom-Json
+            if ($message.id -eq 1) {
+                if ($message.error) { throw $message.error.message }
+                return $message.result
+            }
+        }
+    } finally {
+        $socket.Dispose()
+        $timeout.Dispose()
+    }
+}
+
+function Save-CdpCookies {
+    param([object[]]$Cookies, [string]$Path)
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    $lines.Add('# Netscape HTTP Cookie File')
+    foreach ($cookie in $Cookies) {
+        $domain = [string]$cookie.domain
+        if (-not $domain -or -not $cookie.name) { continue }
+        $name = [string]$cookie.name
+        $value = [string]$cookie.value
+        if ($name -match '[\t\r\n]' -or $value -match '[\t\r\n]') { continue }
+        if ($cookie.httpOnly) { $domain = '#HttpOnly_' + $domain }
+        $includeSubdomains = if ($cookie.domain.StartsWith('.')) { 'TRUE' } else { 'FALSE' }
+        $secure = if ($cookie.secure) { 'TRUE' } else { 'FALSE' }
+        $expiry = if ($cookie.expires -gt 0) { [long][Math]::Floor([double]$cookie.expires) } else { 0 }
+        $lines.Add("$domain`t$includeSubdomains`t$($cookie.path)`t$secure`t$expiry`t$name`t$value")
+    }
+    if ($lines.Count -le 1) { throw 'No cookies were available in the browser session.' }
+    [IO.File]::WriteAllLines($Path, $lines, (New-Object Text.UTF8Encoding($false)))
+    return $lines.Count - 1
 }
 
 function Invoke-YouTubeLogin {
-    param ([string]$Url)
-    
-    Write-Host "`n-------------------- BROWSER COOKIE LOGIN --------------------" -ForegroundColor Cyan
-    Write-Host "This extracts cookies directly from your browser." -ForegroundColor White
-    Write-Host "Make sure you are signed in to YouTube in one of these browsers:" -ForegroundColor White
-    Write-Host "  - Google Chrome" -ForegroundColor Gray
-    Write-Host "  - Microsoft Edge" -ForegroundColor Gray
-    Write-Host "  - Mozilla Firefox" -ForegroundColor Gray
-    Write-Host "--------------------------------------------------------------" -ForegroundColor Cyan
-    
-    # Detect installed browsers
-    $browsers = @()
-    $chromePath = Get-Command "chrome" -ErrorAction SilentlyContinue
-    $edgePath = Get-Command "msedge" -ErrorAction SilentlyContinue
-    $firefoxPath = Get-Command "firefox" -ErrorAction SilentlyContinue
-    
-    if ($chromePath) { $browsers += @{ Name = "chrome"; Label = "Google Chrome"; Path = $chromePath.Source } }
-    if ($edgePath) { $browsers += @{ Name = "edge"; Label = "Microsoft Edge"; Path = $edgePath.Source } }
-    if ($firefoxPath) { $browsers += @{ Name = "firefox"; Label = "Mozilla Firefox"; Path = $firefoxPath.Source } }
-    
+    param([string]$Url)
+    if (-not $Url) { $Url = 'https://www.youtube.com/' }
+    $browsers = @(Get-InstalledBrowsers | Where-Object { $_.Name -in @('chrome','edge','brave') })
     if ($browsers.Count -eq 0) {
-        Write-Host "No supported browsers found (Chrome, Edge, Firefox)." -ForegroundColor Red
-        Write-ErrorLog "No supported browsers found for cookie extraction"
+        Write-Host 'Chrome, Edge, or Brave is required for browser sign-in.' -ForegroundColor Yellow
         return $false
     }
-    
-    Write-Host "`nDetected browsers:" -ForegroundColor Yellow
-    for ($i = 0; $i -lt $browsers.Count; $i++) {
-        Write-Host "  [$($i+1)] $($browsers[$i].Label)" -ForegroundColor White
-    }
-    Write-Host "  [0] Cancel" -ForegroundColor Gray
-    
-    $browserChoice = Get-ValidatedUserInput -Prompt "Select browser to extract cookies from:" -InputType "number" -MinValue 0 -MaxValue $browsers.Count -MaxAttempts 3
-    
-    if ($browserChoice -eq 0 -or $null -eq $browserChoice) {
-        Write-Host "Browser login cancelled." -ForegroundColor Yellow
-        return $false
-    }
-    
-    $selectedBrowser = $browsers[$browserChoice - 1]
-    Write-Host "`nExtracting cookies from $($selectedBrowser.Label)..." -ForegroundColor Yellow
-    Write-ErrorLog "Attempting browser cookie extraction from: $($selectedBrowser.Name)"
-    
-    # Test --cookies-from-browser with this browser
-    $testResult = & $ytDlpPath --cookies-from-browser $selectedBrowser.Name --dump-json --skip-download "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 2>&1
-    $testExit = $LASTEXITCODE
-    
-    if ($testExit -eq 0) {
-        Write-Host "Successfully extracted cookies from $($selectedBrowser.Label)!" -ForegroundColor Green
-        Write-ErrorLog "Browser cookie extraction successful from: $($selectedBrowser.Name)"
-        
-        # Update settings to use browser cookies
+    Write-Host "`nSign in using a dedicated UVD browser window." -ForegroundColor Cyan
+    Write-Host 'This avoids reading the locked or encrypted cookies of your regular browser profile.' -ForegroundColor Gray
+    for ($i=0; $i -lt $browsers.Count; $i++) { Write-Host "  [$($i+1)] $($browsers[$i].Label)" }
+    Write-Host '  [0] Cancel'
+    $choice = Get-ValidatedUserInput -Prompt 'Select browser:' -InputType 'number' -MinValue 0 -MaxValue $browsers.Count -MaxAttempts 3
+    if (-not $choice) { return $false }
+    $selected = $browsers[$choice-1]
+    $browserPath = @($selected.Paths | Where-Object { $_ -and (Test-Path -LiteralPath $_) })[0]
+    $profileDir = Join-Path $env:LOCALAPPDATA "UVD\BrowserProfile\$($selected.Name)"
+    New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+    $portFile = Join-Path $profileDir 'DevToolsActivePort'
+    try {
+        Start-Process -FilePath $browserPath -ArgumentList @('--no-first-run','--remote-debugging-address=127.0.0.1','--remote-debugging-port=0',"--user-data-dir=`"$profileDir`"",$Url) -WindowStyle Normal | Out-Null
+        $port = $null
+        for ($i=0; $i -lt 50; $i++) {
+            if (Test-Path -LiteralPath $portFile) {
+                $port = Get-Content -LiteralPath $portFile -TotalCount 1
+                if ($port -match '^\d+$') { break }
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        if (-not $port -or $port -notmatch '^\d+$') { throw 'Browser debugging endpoint did not start. Close the UVD browser window and retry.' }
+        Write-Host 'Sign in to the site in the new browser window, then return here.' -ForegroundColor Yellow
+        $answer = Read-Host 'Press Enter when signed in, or type B to cancel'
+        if ($answer -in @('b','back','cancel')) { return $false }
+        $endpoint = Invoke-RestMethod -Uri "http://127.0.0.1:$port/json/version" -TimeoutSec 10
+        $result = Invoke-CdpCommand -WebSocketUrl $endpoint.webSocketDebuggerUrl -Method 'Storage.getCookies'
+        $cookiePath = Join-Path $scriptDir 'browser_session_cookies.txt'
+        $candidatePath = "$cookiePath.new"
+        $count = Save-CdpCookies -Cookies @($result.cookies) -Path $candidatePath
+        Write-Host 'Checking whether the signed-in session can access this video...' -ForegroundColor Yellow
+        $runtimeArguments = @(Get-YtDlpRuntimeArguments)
+        $extraArguments = @(Get-YtDlpExtraArguments)
+        $testOutput = & $ytDlpPath @runtimeArguments --cookies $candidatePath --simulate --skip-download --no-playlist --extractor-retries 1 --socket-timeout 15 --print id @extraArguments $Url 2>&1 | ForEach-Object { $_.ToString() }
+        if ($LASTEXITCODE -ne 0) {
+            throw "The browser session is not accepted for this video: $(($testOutput | Select-Object -Last 2) -join ' ')"
+        }
+        Move-Item -LiteralPath $candidatePath -Destination $cookiePath -Force
         $settings.cookies.use_cookies = $true
-        $settings.cookies.cookie_source = $selectedBrowser.Name
-        Save-Settings
-        
-        # Enable --cookies-from-browser in download arguments
-        $script:useBrowserCookies = $true
-        $script:browserCookieSource = $selectedBrowser.Name
-        
-        Write-Host "Cookie authentication enabled. Downloads will use browser cookies." -ForegroundColor Green
+        $settings.cookies.cookie_source = ''
+        $settings.cookies.cookie_file_path = 'browser_session_cookies.txt'
+        $settings.cookies.cookie_file_directory = ''
+        Set-BrowserCookieState
+        Save-Settings | Out-Null
+        Write-Host "Saved $count cookies from the signed-in browser session." -ForegroundColor Green
         return $true
-    } else {
-        $errorMsg = ($testResult | Where-Object { $_ -match "ERROR|error|failed|couldn" }) -join "`n"
-        Write-Host "Failed to extract cookies from $($selectedBrowser.Label)." -ForegroundColor Red
-        Write-Host "Error: $errorMsg" -ForegroundColor Yellow
-        Write-ErrorLog "Browser cookie extraction failed from $($selectedBrowser.Name): $errorMsg"
-        
-        Write-Host "`nPossible solutions:" -ForegroundColor Yellow
-        Write-Host "  1. Make sure you are signed in to YouTube in $($selectedBrowser.Label)" -ForegroundColor White
-        Write-Host "  2. Close all $($selectedBrowser.Label) windows and try again" -ForegroundColor White
-        Write-Host "  3. Try a different browser" -ForegroundColor White
+    } catch {
+        Write-Host "Browser sign-in failed: $($_.Exception.Message)" -ForegroundColor Red
+        Write-ErrorLog "Browser sign-in failed: $($_.Exception.Message)"
         return $false
+    } finally {
+        if ($candidatePath -and (Test-Path -LiteralPath $candidatePath)) { Remove-Item -LiteralPath $candidatePath -Force }
+        Get-CimInstance Win32_Process -Filter "name='chrome.exe' or name='msedge.exe' or name='brave.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine.Contains($profileDir) } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     }
 }
 
@@ -1398,17 +1596,7 @@ function Add-EnhancedHeaders {
     param (
         [System.Collections.Generic.List[string]]$ArgumentsList
     )
-    
-    # Add enhanced headers to avoid 403 errors, aligned with Get-VideoInfoWithTimeout
-    $ArgumentsList.Add("--no-check-certificate")
-    $ArgumentsList.Add("--user-agent")
-    $ArgumentsList.Add("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-    $ArgumentsList.Add("--add-header")
-    $ArgumentsList.Add("Accept-Language:en-US,en;q=0.9")
-    $ArgumentsList.Add("--add-header")
-    $ArgumentsList.Add("Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-    $ArgumentsList.Add("--add-header")
-    $ArgumentsList.Add("Sec-Fetch-Mode:navigate")
+    # Use yt-dlp's current defaults; sites and browser headers change over time.
 }
 
 function Get-QualityPrefix {
@@ -1491,6 +1679,7 @@ function New-DownloadArguments {
     
     $argsList = New-Object System.Collections.Generic.List[string]
     $argsList.Add("--no-warnings")
+    foreach ($runtimeArg in @(Get-YtDlpRuntimeArguments)) { $argsList.Add([string]$runtimeArg) }
     Add-EnhancedHeaders -ArgumentsList $argsList
     
     # Add optimization and anti-bot settings if enabled
@@ -1585,8 +1774,7 @@ function New-DownloadArguments {
             $argsList.Add("--cookies"); $argsList.Add($tempCookieFile)
             Write-ErrorLog "Download cookies added from temp copy: $tempCookieFile (original: $CookieFilePath)"
         } catch {
-            $argsList.Add("--cookies"); $argsList.Add($CookieFilePath)
-            Write-ErrorLog "Download cookies added (original, copy failed): $CookieFilePath"
+            throw "Could not copy cookies to a temporary file: $($_.Exception.Message)"
         }
     } else {
         Write-ErrorLog "No cookies configured for download - UseCookies: $UseCookies, CookieFilePath: $CookieFilePath, FileExists: $(if ($CookieFilePath) { Test-Path $CookieFilePath } else { 'N/A' })"
@@ -1701,6 +1889,7 @@ function New-DownloadArguments {
         }
     }
     
+    foreach ($extraArg in @(Get-YtDlpExtraArguments)) { $argsList.Add([string]$extraArg) }
     $argsList.Add($Url)
     return $argsList
 }
@@ -1725,40 +1914,40 @@ function Get-VideoInfoWithTimeout {
     # Pass proxy info explicitly to job since environment variables don't transfer
     $proxyUrl = $env:HTTP_PROXY
     
+    $browserSource = if ($script:useBrowserCookies) { $script:browserCookieSource } elseif ($settings.cookies.use_cookies) { $settings.cookies.cookie_source } else { '' }
+    $optimization = $settings.optimization
+    $runtimeArguments = @(Get-YtDlpRuntimeArguments)
+    $extraArguments = @(Get-YtDlpExtraArguments)
     $job = Start-Job -ScriptBlock {
-        param($url, $ytDlpPath, $useCookies, $cookieFilePath, $proxyUrl)
+        param($url, $ytDlpPath, $useCookies, $cookieFilePath, $proxyUrl, $browserSource, $optimization, $runtimeArguments, $extraArguments)
         
         $argumentList = @(
             "--dump-json", 
-            "--no-warnings", 
-            "--no-check-certificate",
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "--add-header", "Accept-Language:en-US,en;q=0.9",
-            "--add-header", "Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "--add-header", "Sec-Fetch-Mode:navigate"
+            "--no-warnings"
         )
+        $argumentList += $runtimeArguments
         
         # Add anti-bot settings from config
-        if ([bool]$settings.optimization.enable_optimization) {
-            if (-not [string]::IsNullOrWhiteSpace($settings.optimization.extractor_args)) {
+        if ([bool]$optimization.enable_optimization) {
+            if (-not [string]::IsNullOrWhiteSpace($optimization.extractor_args)) {
                 $argumentList += "--extractor-args"
-                $argumentList += $settings.optimization.extractor_args
+                $argumentList += $optimization.extractor_args
             }
-            if ($settings.optimization.extractor_retries -gt 0) {
+            if ($optimization.extractor_retries -gt 0) {
                 $argumentList += "--extractor-retries"
-                $argumentList += $settings.optimization.extractor_retries.ToString()
+                $argumentList += $optimization.extractor_retries.ToString()
             }
-            if ($settings.optimization.sleep_requests -gt 0) {
+            if ($optimization.sleep_requests -gt 0) {
                 $argumentList += "--sleep-requests"
-                $argumentList += $settings.optimization.sleep_requests.ToString()
+                $argumentList += $optimization.sleep_requests.ToString()
             }
-            if ($settings.optimization.sleep_interval -gt 0) {
+            if ($optimization.sleep_interval -gt 0) {
                 $argumentList += "--sleep-interval"
-                $argumentList += $settings.optimization.sleep_interval.ToString()
+                $argumentList += $optimization.sleep_interval.ToString()
             }
-            if ($settings.optimization.max_sleep_interval -gt 0) {
+            if ($optimization.max_sleep_interval -gt 0) {
                 $argumentList += "--max-sleep-interval"
-                $argumentList += $settings.optimization.max_sleep_interval.ToString()
+                $argumentList += $optimization.max_sleep_interval.ToString()
             }
         }
         
@@ -1769,9 +1958,9 @@ function Get-VideoInfoWithTimeout {
         }
         
         # Add cookies - prefer browser cookies over file to prevent yt-dlp from modifying user's cookies.txt
-        if ($script:useBrowserCookies -and $script:browserCookieSource) {
+        if ($browserSource) {
             $argumentList += "--cookies-from-browser"
-            $argumentList += $script:browserCookieSource
+            $argumentList += $browserSource
         } elseif ($useCookies -and $cookieFilePath -and (Test-Path $cookieFilePath)) {
             # Copy cookies.txt to temp file so yt-dlp doesn't modify the original
             $tempCookieFile = Join-Path ([System.IO.Path]::GetTempPath()) "uvd_cookies_$([System.IO.Path]::GetRandomFileName()).txt"
@@ -1780,11 +1969,10 @@ function Get-VideoInfoWithTimeout {
                 $argumentList += "--cookies"
                 $argumentList += $tempCookieFile
             } catch {
-                # If copy fails, use original as fallback
-                $argumentList += "--cookies"
-                $argumentList += $cookieFilePath
+                return @{ Success = $false; Error = "Could not copy cookies to a temporary file: $($_.Exception.Message)"; ExitCode = -1 }
             }
         }
+        $argumentList += $extraArguments
         $argumentList += $url
         
         # Debug logging for troubleshooting
@@ -1814,8 +2002,12 @@ function Get-VideoInfoWithTimeout {
                 Error = "Exception: $($_.Exception.Message)"
                 ExitCode = -1
             }
+        } finally {
+            if ($tempCookieFile -and (Test-Path -LiteralPath $tempCookieFile)) {
+                Remove-Item -LiteralPath $tempCookieFile -Force -ErrorAction SilentlyContinue
+            }
         }
-    } -ArgumentList $Url, $YtDlpPath, $UseCookies, $CookieFilePath, $proxyUrl
+    } -ArgumentList $Url, $YtDlpPath, $UseCookies, $CookieFilePath, $proxyUrl, $browserSource, $optimization, $runtimeArguments, $extraArguments
     
     try {
         $completed = Wait-Job -Job $job -Timeout $TimeoutSeconds
@@ -1984,14 +2176,14 @@ function Open-SettingsFile {
         Write-Host ""
         Write-Host "⚙️ Opening settings file..." -ForegroundColor Green
         if (Test-Path $settingsPath) {
-            Start-Process -FilePath "notepad.exe" -ArgumentList $settingsPath -ErrorAction Stop
+            Start-Process -FilePath "notepad.exe" -ArgumentList "`"$settingsPath`"" -Wait -ErrorAction Stop
             Write-ErrorLog "Successfully opened settings file: $settingsPath"
             Write-Host "✅ Settings file opened successfully!" -ForegroundColor Green
             Write-Host "📄 Location: $settingsPath" -ForegroundColor Cyan
         } else {
             Write-Host "⚠️ Settings file not found. Creating new settings file..." -ForegroundColor Yellow
             if (Create-SettingsFile -Path $settingsPath) {
-                Start-Process -FilePath "notepad.exe" -ArgumentList $settingsPath -ErrorAction Stop
+                Start-Process -FilePath "notepad.exe" -ArgumentList "`"$settingsPath`"" -Wait -ErrorAction Stop
                 Write-Host "✅ New settings file created and opened!" -ForegroundColor Green
                 Write-Host "📄 Location: $settingsPath" -ForegroundColor Cyan
             } else {
@@ -2003,6 +2195,17 @@ function Open-SettingsFile {
         Write-Host "❌ Could not open settings file automatically" -ForegroundColor Red
         Write-Host "📄 Settings file location: $settingsPath" -ForegroundColor Yellow
     }
+}
+
+function Open-YtDlpConfig {
+    $path = Join-Path $scriptDir 'yt-dlp.conf'
+    if (-not (Test-Path -LiteralPath $path)) {
+        $content = "# Extra yt-dlp options. One option per line.`r`n# See https://github.com/yt-dlp/yt-dlp#usage-and-options`r`n# Example: --sponsorblock-remove all`r`n"
+        [IO.File]::WriteAllText($path, $content, (New-Object Text.UTF8Encoding($false)))
+    }
+    try {
+        Start-Process -FilePath 'notepad.exe' -ArgumentList "`"$path`"" -Wait -ErrorAction Stop
+    } catch { Write-Host "Could not open yt-dlp config: $($_.Exception.Message)" -ForegroundColor Yellow }
 }
 
 function Open-DownloadsFolder {
@@ -2062,7 +2265,7 @@ function Show-ScriptHelp {
     Write-Host "  clear-cache    : " -NoNewline; Write-Host "Clear cached video information" -ForegroundColor Gray
     Write-Host "  folder         : " -NoNewline; Write-Host "Open program folder in explorer" -ForegroundColor Gray
     Write-Host "  downloads      : " -NoNewline; Write-Host "Open downloads folder" -ForegroundColor Gray
-    Write-Host "  settings       : " -NoNewline; Write-Host "Open settings.json file for editing" -ForegroundColor Gray
+    Write-Host "  settings       : " -NoNewline; Write-Host "Change settings inside UVD (Notepad available)" -ForegroundColor Gray
     Write-Host "  exit           : " -NoNewline; Write-Host "Exit the program gracefully" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  Command line options:" -ForegroundColor White
@@ -2143,8 +2346,8 @@ function Show-ScriptHelp {
     Write-Host "     • Use 'clear-cache' to refetch video info." -ForegroundColor White
     Write-Host ""
     Write-Host "  🔒 How to download age-restricted or private videos?" -ForegroundColor Red
-    Write-Host "     • The best method is using a cookies.txt file from your logged-in browser." -ForegroundColor White
-    Write-Host "     • The script may also prompt you to log in to YouTube. This will open a Chrome window for you to sign in." -ForegroundColor White
+    Write-Host "     • Use a cookie file or choose browser sign-in from the error menu." -ForegroundColor White
+    Write-Host "     • Browser sign-in opens a separate Chrome, Edge, or Brave profile for UVD." -ForegroundColor White
     Write-Host "     • This method can help with some restricted content." -ForegroundColor White
     Write-Host ""
     Write-Host "  🐛 Other issues?" -ForegroundColor Red
@@ -2198,7 +2401,8 @@ function Show-ScriptHelp {
     Write-Host "     • sleep_requests          : Sleep between requests to avoid rate limiting (default: 1)" -ForegroundColor White
     Write-Host "     • sleep_interval          : Random sleep interval minimum in seconds (default: 3)" -ForegroundColor White
     Write-Host "     • max_sleep_interval      : Random sleep interval maximum in seconds (default: 7)" -ForegroundColor White
-    Write-Host "     • extractor_args          : yt-dlp extractor args for anti-bot (default: 'youtube:player_client=web,android_vr,tv_downgraded')" -ForegroundColor White
+    Write-Host "     • extractor_args          : Optional extractor override (default: empty; use yt-dlp defaults)" -ForegroundColor White
+    Write-Host "     • yt_dlp                   : JavaScript runtime, EJS, and extra yt-dlp arguments" -ForegroundColor White
     Write-Host "     • extractor_retries       : Retries for extractor errors (default: 3)" -ForegroundColor White
     Write-Host "     • use_aria2c_downloader   : Use aria2c for faster downloads (default: false)" -ForegroundColor White
     Write-Host "     • rate_limit              : Download speed limit (e.g., '1M', '500K') (default: '')" -ForegroundColor White
@@ -2542,6 +2746,16 @@ function Show-FormatsMenu {
             "audio" { $audioFormats += $formatObj }
         }
     }
+    # yt-dlp may expose the same quality through many clients and protocols.
+    $combinedFormats = @($combinedFormats | Sort-Object { [double]$_.Format.tbr } -Descending |
+        Group-Object { "$($_.Format.ext)|$($_.Format.height)|$($_.Format.vcodec)|$($_.Format.acodec)" } |
+        ForEach-Object { $_.Group[0] })
+    $videoFormats = @($videoFormats | Sort-Object { [double]$_.Format.tbr } -Descending |
+        Group-Object { "$($_.Format.ext)|$($_.Format.height)|$($_.Format.vcodec)" } |
+        ForEach-Object { $_.Group[0] })
+    $audioFormats = @($audioFormats | Sort-Object { [double]$_.Format.abr } -Descending |
+        Group-Object { "$($_.Format.ext)|$($_.Format.acodec)|$([Math]::Round([double]$_.Format.abr / 32))" } |
+        ForEach-Object { $_.Group[0] })
     
     # Sort formats
     $combinedFormats = $combinedFormats | Sort-Object -Property {$_.Format.height}, {$_.Format.tbr} -Descending
@@ -2568,15 +2782,19 @@ function Show-FormatsMenu {
     Write-Host "⭐ QUICK OPTIONS" -ForegroundColor Yellow
     Write-Host "────────────────" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "  " -NoNewline
-    Write-Host "$([string]($optionNumber++)).".PadRight(4) -NoNewline -ForegroundColor Cyan
-    Write-Host "🏆 " -NoNewline
-    Write-Host "Highest Bitrate Quality " -NoNewline -ForegroundColor Green
-    Write-Host "(Recommended - Selects highest bitrate video + audio)" -ForegroundColor Gray
-    $menuOptions += @{
-        Number = $optionNumber - 1
-        Type = "best"
-        Description = "Download highest bitrate available quality"
+    if ($combinedFormats.Count -gt 0 -or $videoFormats.Count -gt 0) {
+        Write-Host "  " -NoNewline
+        Write-Host "$([string]($optionNumber++)).".PadRight(4) -NoNewline -ForegroundColor Cyan
+        Write-Host "🏆 " -NoNewline
+        Write-Host "Best Available Video " -NoNewline -ForegroundColor Green
+        Write-Host "(Recommended - yt-dlp selects the best streams)" -ForegroundColor Gray
+        $menuOptions += @{
+            Number = $optionNumber - 1
+            Type = "best"
+            Description = "Download best available video quality"
+        }
+    } else {
+        Write-Host 'No playable video formats were returned. Check yt-dlp, Deno/EJS, and cookies.' -ForegroundColor Yellow
     }
     
     # --- Combined formats (video+audio) ---
@@ -3229,6 +3447,7 @@ if ($Help) {
 # Load settings with error handling
 try {
     Load-Settings
+    Set-BrowserCookieState
 } catch {
     Show-EnhancedError -TechnicalError $_.Exception.Message -Context "Failed to load settings configuration"
     Write-Host "Using default settings due to configuration error." -ForegroundColor Yellow
@@ -3266,6 +3485,11 @@ $updateFfmpegResult = $null
 Invoke-StartupTask -Message "Checking for ffmpeg updates" -Action {
     $global:updateFfmpegResult = Update-Ffmpeg -FfmpegPath $localFfmpegPath -Quiet
     return $global:updateFfmpegResult.Success
+}
+
+Invoke-StartupTask -Message "Checking JavaScript runtime for YouTube" -Action {
+    Ensure-JavaScriptRuntime
+    return $true
 }
 
 if ($global:updateYtDlpResult.NeedsRestart -or $global:updateFfmpegResult.NeedsRestart) {
@@ -3371,11 +3595,11 @@ function Show-QuickGuide {
     Write-Host "  clear-cache  : Clear video information cache" -ForegroundColor Cyan
     Write-Host "  folder       : Open program folder in explorer" -ForegroundColor Cyan
     Write-Host "  downloads    : Open downloads folder" -ForegroundColor Cyan
-    Write-Host "  settings     : Open settings file" -ForegroundColor Cyan
+    Write-Host "  settings     : Configure UVD settings" -ForegroundColor Cyan
     Write-Host "  exit         : Exit the program" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "─────────────────────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-    Write-Host "💡 Tip: Configure settings.json for proxy, cookies, and advanced options" -ForegroundColor White
+    Write-Host "💡 Tip: Use settings for proxy, cookies, and advanced options" -ForegroundColor White
     Write-Host "─────────────────────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
     Write-Host ""
 }
@@ -3390,7 +3614,7 @@ Write-Host "║                                                                 
 Write-Host "║         Download from YouTube, TikTok, Instagram, Twitter, Facebook,          ║" -ForegroundColor White
 Write-Host "║              Twitch, Vimeo, SoundCloud, Reddit & 1800+ sites                  ║" -ForegroundColor White
 Write-Host "║                                                                               ║" -ForegroundColor Cyan
-Write-Host "║                        Version 3.0 - Modern Edition                           ║" -ForegroundColor Gray
+    Write-Host "║                        Version 4.0 - Modern Edition                           ║" -ForegroundColor Gray
 Write-Host "║                                                                               ║" -ForegroundColor Cyan
 Write-Host "╚═══════════════════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 
@@ -3420,6 +3644,7 @@ $continueWithNewLink = 'y'
 Write-ErrorLog "=== MAIN EXECUTION LOOP STARTED ==="
 
 do { 
+    Set-MainMenuWindowSize
     Write-Host "╭──────────────────────────────╮" -ForegroundColor Cyan
     Write-Host "│          MAIN MENU           │" -ForegroundColor Cyan
     Write-Host "╰──────────────────────────────╯" -ForegroundColor Cyan
@@ -3489,8 +3714,14 @@ do {
     }
     
     if ($userInputUrl -eq 'settings') {
-        Write-ErrorLog "User requested settings open"
-        Open-SettingsFile
+        Write-ErrorLog "User requested settings menu"
+        Show-SettingsMenu
+        $tempDir = Join-Path $scriptDir $settings.download.temp_directory
+        $downloadedDir = Join-Path $scriptDir $settings.download.output_directory
+        $videoOutputDir = Join-Path $downloadedDir $settings.download.video_subdirectory
+        $audioOutputDir = Join-Path $downloadedDir $settings.download.audio_subdirectory
+        $coversOutputDir = Join-Path $downloadedDir $settings.download.covers_subdirectory
+        @($tempDir,$downloadedDir,$videoOutputDir,$audioOutputDir,$coversOutputDir) | ForEach-Object { Initialize-Directory $_ }
         continue
     }
     
@@ -3618,6 +3849,8 @@ do {
                         "login" {
                             $loginSuccess = Invoke-YouTubeLogin -Url $currentUrl
                             if ($loginSuccess) {
+                                $cookieFilePath = Get-CookieFilePath
+                                $useCookies = [bool]$cookieFilePath
                                 $retryCount = 0  # Reset retry count for login attempt
                                 Write-Host "Retrying after login..." -ForegroundColor Yellow
                             } else {
@@ -3797,14 +4030,13 @@ do {
 
             switch ($selectedOption.Type) {
                 "best" {
-                    $highestBitrateResult = Get-HighestBitrateFormat -Formats $formats
-                    $formatStringForDownload = $highestBitrateResult.FormatString
-                    $qualityPrefix = Get-QualityPrefix -Type "best" -SelectedOption $highestBitrateResult
+                    $formatStringForDownload = 'bv*+ba/b'
+                    $qualityPrefix = Get-QualityPrefix -Type "best" -SelectedOption $null
                     $ytdlpOutputTemplate = Join-Path -Path $scriptDir -ChildPath "Temp\$qualityPrefix %(title)s.%(ext)s"
                     
                     Write-Host "  Format: $formatStringForDownload" -ForegroundColor Gray
                     
-                    $downloadType = if ($highestBitrateResult.IsCombined) { "original_video" } else { "video" }
+                    $downloadType = "video"
                     $ytDlpArgsForDownload = New-DownloadArguments -FfmpegPath $ffmpegPath -OutputTemplate $ytdlpOutputTemplate -Format $formatStringForDownload -Url $currentUrl -Type $downloadType -UseCookies $useCookies -CookieFilePath $cookieFilePath
                     
                     $isVideoDownload = $true
@@ -3823,7 +4055,7 @@ do {
                 }
 
                 "specific_video" {
-                    $formatStringForDownload = $selectedOption.Format.format_id
+                    $formatStringForDownload = "$($selectedOption.Format.format_id)+bestaudio/$($selectedOption.Format.format_id)"
                     $qualityPrefix = Get-QualityPrefix -Type "specific_video" -SelectedOption $selectedOption
                     $ytdlpOutputTemplate = Join-Path -Path $scriptDir -ChildPath "Temp\$qualityPrefix %(title)s.%(ext)s"
                     Write-Host "  Format: $formatStringForDownload" -ForegroundColor Gray
@@ -3834,10 +4066,10 @@ do {
                 }
 
                 "mp3_conversion" {
-                    $formatStringForDownload = $selectedOption.Format.format_id
+                    $formatStringForDownload = 'bestaudio/best'
                     $qualityPrefix = Get-QualityPrefix -Type "mp3_conversion" -SelectedOption $selectedOption
                     $ytdlpOutputTemplate = Join-Path -Path $scriptDir -ChildPath "Temp\$qualityPrefix %(title)s.%(ext)s"
-                    $bitrate = if ($selectedOption.Format.abr) { [int]$selectedOption.Format.abr } else { 192 }
+                    $bitrate = [int]$selectedOption.Bitrate
                     Write-Host "  Format: $formatStringForDownload -> MP3 ${bitrate}kbps" -ForegroundColor Gray
                     
                     $downloadType = "audio"
@@ -3878,6 +4110,13 @@ do {
 
             Write-ErrorLog "Executing Download: `"$ytDlpPath`" $($ytDlpArgsForDownload -join ' ')"
             $downloadResult = Invoke-YtDlpSimple -YtDlpPath $ytDlpPath -YtDlpArguments $ytDlpArgsForDownload
+            $cookieArgIndex = $ytDlpArgsForDownload.IndexOf('--cookies')
+            if ($cookieArgIndex -ge 0 -and $cookieArgIndex + 1 -lt $ytDlpArgsForDownload.Count) {
+                $temporaryCookiePath = $ytDlpArgsForDownload[$cookieArgIndex + 1]
+                if ((Split-Path -Leaf $temporaryCookiePath) -like 'uvd_dl_cookies_*' -and (Test-Path -LiteralPath $temporaryCookiePath)) {
+                    Remove-Item -LiteralPath $temporaryCookiePath -Force -ErrorAction SilentlyContinue
+                }
+            }
             
             $exitCodeDownload = $downloadResult.ExitCode
             $downloadProcessOutputLines = $downloadResult.Output

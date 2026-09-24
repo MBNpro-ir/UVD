@@ -1,7 +1,7 @@
 <div dir="rtl" align="center">
   <img src="https://img.shields.io/badge/PowerShell-%3E%3D5.1-blue?style=for-the-badge&logo=powershell&logoColor=white" alt="PowerShell"/>
   <img src="https://img.shields.io/badge/Windows-7%20%7C%2010%20%7C%2011-brightgreen?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"/>
-  <img src="https://img.shields.io/badge/Version-1.0-orange?style=for-the-badge&logo=github&logoColor=white" alt="Version"/>
+  <img src="https://img.shields.io/badge/Version-4.0-orange?style=for-the-badge&logo=github&logoColor=white" alt="Version"/>
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=mit&logoColor=white" alt="License"/>
   <br/>
   <br/>
@@ -74,10 +74,11 @@ UVD از **بیش از ۱۸۰۰ وب‌سایت** از طریق [yt-dlp](https:/
 | **صف دانلود چندگانه** | انتخاب چند کیفیت، دانلود همه با هم |
 | **خلاصه دانلود دسته‌ای** | پیشرفت هر دانلود + خلاصه نهایی |
 | **دانلود تصویر کوچک** | ذخیره تصاویر کوچک ویدیو با کیفیت اصلی |
-| **به‌روزرسانی خودکار** | به‌روزرسانی خودکار yt-dlp و ffmpeg |
+| **به‌روزرسانی خودکار** | بررسی نسخهٔ شبانهٔ yt-dlp و بیلد master از FFmpeg در هر اجرا؛ دانلود ناموفقِ همان نسخه پس از ۲۴ ساعت دوباره امتحان می‌شود |
+| **فرمت‌های یوتیوب** | استفاده از Deno و EJS با تنظیمات پیش‌فرض فعلی yt-dlp و خلاصه‌کردن فرمت‌های تکراری در منو |
 | **مدیریت هوشمند خطا** | پیام‌های خطای هوشمند با راه حل‌ها |
 | **پشتیبانی از Cookie** | دانلود محتوای محدود سنی و خصوصی |
-| **ورود از مرورگر** | استخراج کوکی مستقیماً از کروم/اج‌فایرفاکس |
+| **ورود از مرورگر** | باز کردن پروفایل جداگانهٔ Chrome، Edge یا Brave و دریافت کوکی نشست آن |
 | **محافظت ضدبات** | دور زدن تشخیص بات یوتیوب |
 | **پشتیبانی از پروکسی** | تشخیص خودکار پروکسی سیستم |
 | **کش ویدیو** | کش متادیتا برای دانلودهای سریع‌تر |
@@ -92,7 +93,7 @@ UVD از **بیش از ۱۸۰۰ وب‌سایت** از طریق [yt-dlp](https:/
 | **PowerShell** | نسخه 5.1 یا جدیدتر |
 | **winget** (اختیاری) | برای نصب رسمی خودکار |
 | **اینترنت** | اتصال اینترنت فعال |
-| **فضای دیسک** | حدود 50 مگابایت برای وابستگی‌ها |
+| **فضای دیسک** | دست‌کم ۵۰۰ مگابایت برای دانلود و استخراج FFmpeg |
 
 ---
 
@@ -116,7 +117,7 @@ UVD از **بیش از ۱۸۰۰ وب‌سایت** از طریق [yt-dlp](https:/
 | `clear-cache` | پاک کردن کش متادیتا |
 | `folder` | باز کردن پوشه برنامه |
 | `downloads` | باز کردن پوشه دانلودها |
-| `settings` | باز کردن فایل تنظیمات |
+| `settings` | انتخاب تنظیمات از منو؛ گزینه‌های روشن/خاموش همان‌جا ذخیره می‌شوند و ورود مقدار دلخواه قابل لغو است |
 
 ### صف دانلود چندگانه
 
@@ -139,6 +140,9 @@ UVD/
 ├── cookies.txt          # کوکی‌های مرورگر (اختیاری)
 ├── yt-dlp.exe           # موتور دانلود ویدیو
 ├── ffmpeg.exe           # ابزار پردازش رسانه
+├── ffmpeg.exe.release   # شناسهٔ بیلد نصب‌شدهٔ FFmpeg
+├── deno.exe             # موتور جاوااسکریپت، اگر روی سیستم نصب نباشد
+├── yt-dlp.conf          # تنظیمات اختیاری و اصلی yt-dlp
 ├── video_cache.json     # کش متادیتا ویدیو
 ├── Temp/                # فایل‌های موقت
 └── Downloaded/          # دانلودهای شما
@@ -168,8 +172,12 @@ UVD/
 | `sleep_requests` | `1` | تاخیر بین درخواست‌ها |
 | `sleep_interval` | `3` | حداقل تصادفی تاخیر |
 | `max_sleep_interval` | `7` | حداکثر تصادفی تاخیر |
-| `extractor_args` | `"youtube:player_client=web,android_vr,tv_downgraded"` | آرگومان‌های ضدبات |
+| `extractor_args` | `""` | تنظیم اختیاری استخراج‌کننده؛ پیش‌فرض yt-dlp توصیه می‌شود |
 | `extractor_retries` | `3` | تلاش مجدد خطای اکسترکتور |
+
+در منوی تنظیمات، بخش «yt-dlp and YouTube compatibility» برای انتخاب موتور جاوااسکریپت، EJS و آرگومان‌های اضافه وجود دارد. گزینهٔ `yt-dlp.conf` نیز همهٔ [گزینه‌های اصلی yt-dlp](https://github.com/yt-dlp/yt-dlp#usage-and-options) را در فایل تنظیمات خودش در دسترس می‌گذارد. فهرست فرمت‌های ذخیره‌شده پس از ۳۰ دقیقه یا تغییر تنظیمات مرتبط دوباره دریافت می‌شود.
+
+آرگومان‌های پیشرفته را می‌توان در `extra_arguments_json` به‌شکل آرایهٔ JSON وارد کرد؛ برای مثال `["--sponsorblock-remove", "all"]`. برنامه این آرگومان‌ها را پس از گزینه‌های داخلی خود می‌فرستد.
 
 #### تنظیمات پروکسی
 

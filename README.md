@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://img.shields.io/badge/PowerShell-%3E%3D5.1-blue?style=for-the-badge&logo=powershell&logoColor=white" alt="PowerShell"/>
   <img src="https://img.shields.io/badge/Windows-7%20%7C%2010%20%7C%2011-brightgreen?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"/>
-  <img src="https://img.shields.io/badge/Version-1.0-orange?style=for-the-badge&logo=github&logoColor=white" alt="Version"/>
+  <img src="https://img.shields.io/badge/Version-4.0-orange?style=for-the-badge&logo=github&logoColor=white" alt="Version"/>
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=mit&logoColor=white" alt="License"/>
   <br/>
   <br/>
@@ -75,10 +75,11 @@ UVD supports **1800+ websites** via [yt-dlp](https://github.com/yt-dlp/yt-dlp). 
 | **Multi-Download Queue** | Select multiple qualities, download all at once |
 | **Batch Download Summary** | Progress for each download + final summary |
 | **Thumbnail Download** | Save video thumbnails in original quality |
-| **Auto-Updates** | Automatically updates yt-dlp and ffmpeg |
+| **Auto-Updates** | Checks yt-dlp nightly and FFmpeg master Windows builds on every launch; retries a failed build after 24 hours |
+| **YouTube formats** | Uses Deno and yt-dlp EJS with current default player clients; groups duplicate formats in the menu |
 | **Smart Error Handling** | Intelligent error messages with solutions |
 | **Cookie Support** | Download age-restricted and private content |
-| **Browser Login** | Extract cookies directly from Chrome/Edge/Firefox |
+| **Browser Login** | Open a dedicated Chrome, Edge, or Brave profile for sign-in and export its session cookies |
 | **Anti-Bot Protection** | Built-in bypass for YouTube bot detection |
 | **Proxy Support** | System proxy auto-detection and custom proxy |
 | **Video Cache** | Caches metadata for faster repeated downloads |
@@ -93,7 +94,7 @@ UVD supports **1800+ websites** via [yt-dlp](https://github.com/yt-dlp/yt-dlp). 
 | **PowerShell** | Version 5.1 or newer |
 | **winget** (optional) | For automatic official installation |
 | **Internet** | Active internet connection |
-| **Disk Space** | ~50MB for dependencies |
+| **Disk Space** | Allow at least 500MB for the FFmpeg build download and extraction |
 
 ---
 
@@ -117,7 +118,7 @@ UVD supports **1800+ websites** via [yt-dlp](https://github.com/yt-dlp/yt-dlp). 
 | `clear-cache` | Clear video information cache |
 | `folder` | Open program folder |
 | `downloads` | Open downloads folder |
-| `settings` | Open settings file |
+| `settings` | Choose settings from menus; switches save immediately, and custom values can be cancelled |
 
 ### Multi-Download Queue
 
@@ -140,6 +141,9 @@ UVD/
 ├── cookies.txt          # Browser cookies (optional)
 ├── yt-dlp.exe           # Video downloader engine
 ├── ffmpeg.exe           # Media processing tool
+├── ffmpeg.exe.release   # Installed FFmpeg build identifier
+├── deno.exe             # JavaScript runtime if not installed system-wide
+├── yt-dlp.conf          # Optional native yt-dlp options
 ├── video_cache.json     # Video metadata cache
 ├── Temp/                # Temporary files
 └── Downloaded/          # Your downloads
@@ -179,8 +183,12 @@ UVD/
 | `sleep_requests` | `1` | Sleep between requests (rate limiting) |
 | `sleep_interval` | `3` | Random sleep interval minimum |
 | `max_sleep_interval` | `7` | Random sleep interval maximum |
-| `extractor_args` | `"youtube:player_client=web,android_vr,tv_downgraded"` | Anti-bot extractor args |
+| `extractor_args` | `""` | Optional extractor override; yt-dlp defaults are recommended |
 | `extractor_retries` | `3` | Retries for extractor errors |
+
+The settings menu includes a **yt-dlp and YouTube compatibility** section for JavaScript runtime, EJS remote components, and additional arguments. Its native `yt-dlp.conf` editor accepts any option documented by [yt-dlp](https://github.com/yt-dlp/yt-dlp#usage-and-options). UVD refreshes cached format lists after 30 minutes or when relevant configuration changes.
+
+Advanced arguments may also be entered in `extra_arguments_json` as a JSON string array, for example `["--sponsorblock-remove", "all"]`. UVD appends these after its built-in arguments.
 
 #### Proxy Settings
 
@@ -215,7 +223,7 @@ UVD/
 
 ### Debug Mode
 
-Enable debug logging in `settings.json`:
+Use the `settings` command to enable debug logging, or edit `settings.json`:
 ```json
 {
   "advanced": {
